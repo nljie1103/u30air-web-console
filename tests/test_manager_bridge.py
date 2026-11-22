@@ -22,7 +22,7 @@ class TestDesktopBridge(unittest.TestCase):
 
     def test_version_and_config(self):
         env = self.bridge.environment()
-        self.assertEqual(env["version"], "2.2.1")
+        self.assertEqual(env["version"], "2.2.2")
         self.assertIn("adb_found", env)
         self.assertTrue(Path(self.bridge.settings_file).parent.is_dir())
 
@@ -47,6 +47,12 @@ class TestDesktopBridge(unittest.TestCase):
         self.assertEqual(entries[-1]["level"], "error")
         self.assertIn("模拟操作", entries[-1]["message"])
         self.assertEqual(self.bridge._execute("第二次", lambda: 42), 42)
+
+    def test_log_clear_does_not_reappear_on_poll(self):
+        self.bridge.log("hello")
+        self.assertEqual(len(self.bridge.get_logs()), 1)
+        self.assertTrue(self.bridge.clear_logs())
+        self.assertEqual(self.bridge.get_logs(), [])
 
     def test_user_approval_required_by_frontend_not_backend(self):
         # Bridge does not offer arbitrary command execution or generic shell APIs.

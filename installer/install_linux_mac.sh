@@ -23,12 +23,23 @@ if [[ -z "$IP" ]]; then
 fi
 [[ "$IP" =~ ^(10\.[0-9.]+|192\.168\.[0-9.]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9.]+)$ ]] || { echo "A private LAN IPv4 is required"; exit 1; }
 BASE=/data/local/tmp/android-web-desktop
+CURRENT="$(adb -s "$SERIAL" shell readlink "$BASE/current" 2>/dev/null | tr -d '\r' || true)"
+if [[ "$CURRENT" == "releases/$VER/desktopd" ]]; then
+  echo "Same version is already installed; use the Windows Manager for a safe reinstall."
+  exit 1
+fi
 adb -s "$SERIAL" shell mkdir -p "$BASE/releases/$VER"
-adb -s "$SERIAL" push desktopd "$BASE/releases/$VER/desktopd"
-adb -s "$SERIAL" push installer/start.sh "$BASE/start.sh"
-adb -s "$SERIAL" push installer/stop.sh "$BASE/stop.sh"
-adb -s "$SERIAL" shell chmod 700 "$BASE/releases/$VER/desktopd" "$BASE/start.sh" "$BASE/stop.sh"
-adb -s "$SERIAL" shell sh "$BASE/stop.sh"
+# Upload to temporary paths; never overwrite an executable during transfer.
+adb -s "$SERIAL" push desktopd "$BASE/releases/$VER/desktopd.next"
+adb -s "$SERIAL" push installer/start.sh "$BASE/start.sh.next"
+adb -s "$SERIAL" push installer/stop.sh "$BASE/stop.sh.next"
+adb -s "$SERIAL" shell chmod 700 "$BASE/releases/$VER/desktopd.next" "$BASE/start.sh.next" "$BASE/stop.sh.next"
+if [[ "$CURRENT" =~ ^releases/[0-9]+\.[0-9]+\.[0-9]+/desktopd$ ]]; then
+  adb -s "$SERIAL" shell sh "$BASE/stop.sh"
+fi
+adb -s "$SERIAL" shell mv -f "$BASE/releases/$VER/desktopd.next" "$BASE/releases/$VER/desktopd"
+adb -s "$SERIAL" shell mv -f "$BASE/start.sh.next" "$BASE/start.sh"
+adb -s "$SERIAL" shell mv -f "$BASE/stop.sh.next" "$BASE/stop.sh"
 adb -s "$SERIAL" shell rm -f "$BASE/current.new"
 adb -s "$SERIAL" shell ln -s "releases/$VER/desktopd" "$BASE/current.new"
 adb -s "$SERIAL" shell mv -f "$BASE/current.new" "$BASE/current"

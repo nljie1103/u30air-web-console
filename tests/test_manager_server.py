@@ -38,9 +38,19 @@ class TestLocalFrontend(unittest.TestCase):
         status, body, _ = self.get("/assets/index-test.js")
         self.assertEqual(status, 200)
         self.assertIn(b'console.log', body)
-        for path in ("/secret.txt", "/../secret.txt", "/settings", "/api/devices"):
+        for path in (
+            "/secret.txt", "/../secret.txt", "/settings", "/api/devices",
+            "/assets/%2e%2e%2fsecret.txt", "/assets/%252e%252e%252fsecret.txt",
+            "/assets/%2e%2e%5csecret.txt", "/assets/test%2ejs",
+            "/assets/../secret.txt", "/assets/./index-test.js",
+        ):
             with self.subTest(path=path):
                 self.assertEqual(self.get(path)[0], 404)
+
+    def test_rejects_asset_symlinks(self):
+        root = Path(self.tmp.name)
+        (root / "assets" / "linked.js").symlink_to(root / "secret.txt")
+        self.assertEqual(self.get("/assets/linked.js")[0], 404)
 
     def test_rejects_dns_rebinding_and_post(self):
         self.assertEqual(self.get("/index.html", host="untrusted.example")[0], 403)

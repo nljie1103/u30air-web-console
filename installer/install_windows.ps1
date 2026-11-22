@@ -156,13 +156,24 @@ $address=("{0}:{1}" -f $ip,$Port)
 Write-Host ("Installing v{0} for {1}" -f $ver,$address) -ForegroundColor Cyan
 
 # Upload and verify BEFORE interrupting the existing service.
+$oldLink = ""
+try { $oldLink = (Run-Adb -ArgList @("-s",$serial,"shell","readlink","$remote/current")).Trim() } catch { }
+if ($oldLink -eq "releases/$ver/desktopd") {
+  throw "This version is already installed. For a safe same-version reinstall, use Windows Manager."
+}
 $dest="$remote/releases/$ver/desktopd"
 Run-Adb -ArgList @("-s",$serial,"shell","mkdir","-p","$remote/releases/$ver") | Out-Null
-Run-Adb -ArgList @("-s",$serial,"push",$binaryPath,$dest) | Out-Null
-Run-Adb -ArgList @("-s",$serial,"push",(Join-Path $root "start.sh"),"$remote/start.sh") | Out-Null
-Run-Adb -ArgList @("-s",$serial,"push",(Join-Path $root "stop.sh"),"$remote/stop.sh") | Out-Null
-Run-Adb -ArgList @("-s",$serial,"shell","chmod","700",$dest,"$remote/start.sh","$remote/stop.sh") | Out-Null
-Run-Adb -ArgList @("-s",$serial,"shell","sh","$remote/stop.sh") | Out-Null
+# Stage new binaries before stopping any existing service.
+Run-Adb -ArgList @("-s",$serial,"push",$binaryPath,"$dest.next") | Out-Null
+Run-Adb -ArgList @("-s",$serial,"push",(Join-Path $root "start.sh"),"$remote/start.sh.next") | Out-Null
+Run-Adb -ArgList @("-s",$serial,"push",(Join-Path $root "stop.sh"),"$remote/stop.sh.next") | Out-Null
+Run-Adb -ArgList @("-s",$serial,"shell","chmod","700","$dest.next","$remote/start.sh.next","$remote/stop.sh.next") | Out-Null
+if ($oldLink -match '^releases/\d+\.\d+\.\d+/desktopd$') {
+  Run-Adb -ArgList @("-s",$serial,"shell","sh","$remote/stop.sh") | Out-Null
+}
+Run-Adb -ArgList @("-s",$serial,"shell","mv","-f","$dest.next",$dest) | Out-Null
+Run-Adb -ArgList @("-s",$serial,"shell","mv","-f","$remote/start.sh.next","$remote/start.sh") | Out-Null
+Run-Adb -ArgList @("-s",$serial,"shell","mv","-f","$remote/stop.sh.next","$remote/stop.sh") | Out-Null
 Run-Adb -ArgList @("-s",$serial,"shell","rm","-f","$remote/current.new") | Out-Null
 Run-Adb -ArgList @("-s",$serial,"shell","ln","-s","releases/$ver/desktopd","$remote/current.new") | Out-Null
 Run-Adb -ArgList @("-s",$serial,"shell","mv","-f","$remote/current.new","$remote/current") | Out-Null

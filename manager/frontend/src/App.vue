@@ -44,7 +44,7 @@ const appSearch = ref('')
 const showSystem = ref(false)
 const activeOnly = ref<'all' | 'enabled' | 'disabled'>('all')
 const adbPath = ref('')
-const envVersion = ref('2.2.0')
+const envVersion = ref('2.2.2')
 const loading = ref('')
 const ready = ref(false)
 const error = ref('')
@@ -121,6 +121,13 @@ async function work<T>(message: string, action: () => Promise<T>, done?: (result
 async function getLogs() {
   if (preview || !ready.value) return
   try { entries.value = await invoke<Entry[]>('get_logs') } catch { /* log endpoint may be offline */ }
+}
+async function clearLogs() {
+  if (preview) { entries.value = []; return }
+  await work('清空当前会话日志…', () => invoke<boolean>('clear_logs'), () => {
+    entries.value = []
+    showToast('当前会话日志已清空')
+  })
 }
 async function refreshDevices() {
   if (preview) return
@@ -310,7 +317,7 @@ async function copyText(value: string) {
 }
 function previewSetup() {
   ready.value = true
-  envVersion.value = '2.2.0'
+  envVersion.value = '2.2.2'
   adbPath.value = 'C:\\Android\\platform-tools\\adb.exe'
   devices.value = [{ serial: 'ZY22FQ7A9H', state: 'device', detail: 'usb:1-4 product:demo model:Pixel' },{ serial: '192.168.1.28:5555', state: 'offline' }]
   selected.value = 'ZY22FQ7A9H'
@@ -660,7 +667,7 @@ watch(showSystem, () => { if (!preview && selected.value) void work('正在筛�
         <template v-else-if="current === 'logs'">
           <section class="panel log-panel">
             <div class="panel-head"><div><h2>运行日志</h2><p>本次管理器会话中的操作记录与错误信息</p></div>
-              <button class="btn btn-outline" @click="entries = []"><Trash2 :size="15" /> 清空视图</button>
+              <button class="btn btn-outline" :disabled="!!loading" @click="clearLogs"><Trash2 :size="15" /> 清空日志</button>
             </div>
             <div class="logs-toolbar"><div><span class="log-live-dot"></span> 本地会话日志</div><span>{{ entries.length }} 条记录</span></div>
             <div class="console-rows">

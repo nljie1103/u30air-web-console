@@ -162,65 +162,140 @@ def verify_remote_service(adb: ADB, serial: str, version: str, progress=lambda _
                     pass
     raise ADBError("部署后健康检查未通过：" + str(last_error or "无响应"))
 
-def install_on_device(adb: ADB, serial: str, package: Package, ip: str, port: int = 8765, progress=lambda _: None) -> tuple[str, str]:
+def install_on_device(
+    adb: ADB, serial: str, package: Package, ip: str, port: int = 8765,
+    progress=lambda _: None,
+) -> tuple[str, str]:
     parsed = ipaddress.ip_address(ip)
-    if parsed.version != 4 or not parsed.is_private or parsed.is_link_local or parsed.is_loopback or parsed.is_unspecified:
+    if (parsed.version != 4 or not parsed.is_private or parsed.is_link_local
+            or parsed.is_loopback or parsed.is_unspecified):
         raise ValueError("访问 IP 必须是设备的私有局域网地址")
-    if not (1024 <= port <= 65535):
+    if not 1024 <= port <= 65535:
         raise ValueError("不支持该网页端口")
     if adb.getprop(serial, "ro.product.cpu.abi") != "arm64-v8a":
         raise ADBError("设备不是 arm64-v8a，无法安装此程序")
+
     remote = DATA_DIR
-    current = ""
-    try:
-        current = adb.shell(serial, "readlink", remote + "/current").strip()
-    except ADBError:
-        pass
     target = f"releases/{package.version}/desktopd"
     base = f"{remote}/releases/{package.version}"
-    progress("准备目标目录")
-    adb.shell(serial, "mkdir", "-p", base, timeout=15)
-    with tempfile.TemporaryDirectory(prefix="awd-manager-") as temp:
-        for name, content in package.files.items():
-            local = Path(temp) / name
-            local.write_bytes(content)
-            dest = base + "/desktopd" if name == "desktopd" else remote + "/" + name
-            progress(f"传输 {name}")
-            adb.selected(serial, "push", str(local), dest, timeout=75)
-    adb.shell(serial, "chmod", "700", base + "/desktopd", remote + "/start.sh", remote + "/stop.sh")
-    progress("停止旧服务并切换程序")
-    adb.shell(serial, "sh", remote + "/stop.sh", timeout=12)
+    old_link = ""
     try:
+        old_link = adb.shell(serial, "readlink", remote + "/current").strip()
+    except ADBError:
+        pass
+    old_exists = VERSION_RE.fullmatch(old_link) is not None
+    replacing_current = old_link == target
+    old_pid = ""
+    if old_exists:
+        try:
+            old_pid = adb.shell(serial, "cat", remote + "/server.pid", timeout=6).strip()
+        except ADBError:
+            pass
+
+    # Stage every file before stopping the old service. Never push directly
+    # into an executable that might currently be running.
+    stage_binary = base + "/desktopd.next"
+    stage_start = remote + "/start.sh.next"
+    stage_stop = remote + "/stop.sh.next"
+    old_binary_backup = base + "/desktopd.rollback"
+    script_backups = (remote + "/start.sh.rollback", remote + "/stop.sh.rollback")
+    script_files = (remote + "/start.sh", remote + "/stop.sh")
+    stopped = False
+    switched = False
+    install_healthy = False
+
+    try:
+        progress("准备临时版本目录")
+        adb.shell(serial, "mkdir", "-p", base, timeout=15)
+        with tempfile.TemporaryDirectory(prefix="awd-manager-") as temp:
+            for name, content in package.files.items():
+                local = Path(temp) / name
+                local.write_bytes(content)
+                dest = stage_binary if name == "desktopd" else (
+                    stage_start if name == "start.sh" else stage_stop
+                )
+                progress(f"暂存 {name}")
+                adb.selected(serial, "push", str(local), dest, timeout=75)
+        adb.shell(serial, "chmod", "700", stage_binary, stage_start, stage_stop)
+
+        # Save the old startup scripts even if the app version is changing.
+        # Their behavior might change between releases, so rollback needs them.
+        if old_exists:
+            for live, backup in zip(script_files, script_backups):
+                adb.shell(serial, "cp", live, backup, timeout=10)
+                adb.shell(serial, "chmod", "700", backup)
+            if replacing_current:
+                adb.shell(serial, "cp", base + "/desktopd", old_binary_backup, timeout=15)
+                adb.shell(serial, "chmod", "700", old_binary_backup)
+
+        progress("停止现有服务")
+        if old_exists:
+            adb.shell(serial, "sh", remote + "/stop.sh", timeout=15)
+        stopped = True
+
+        # Rename files atomically on the device filesystem.
+        adb.shell(serial, "mv", "-f", stage_binary, base + "/desktopd")
+        adb.shell(serial, "mv", "-f", stage_start, script_files[0])
+        adb.shell(serial, "mv", "-f", stage_stop, script_files[1])
         adb.shell(serial, "rm", "-f", remote + "/current.new")
         adb.shell(serial, "ln", "-s", target, remote + "/current.new")
         adb.shell(serial, "mv", "-f", remote + "/current.new", remote + "/current")
-        progress("启动服务")
+        switched = True
+
+        progress("启动并验收新服务")
         adb.shell(serial, "sh", remote + "/start.sh", f"{ip}:{port}", timeout=15)
         password = adb.shell(serial, "cat", remote + "/password.txt", timeout=10).strip()
         if not re.fullmatch(r"[0-9a-f]{32}", password):
             raise ADBError("服务启动口令读取失败，请检查 server.log")
+        if old_pid.isdecimal() and int(old_pid) > 1:
+            new_pid = adb.shell(serial, "cat", remote + "/server.pid", timeout=6).strip()
+            if new_pid == old_pid:
+                raise ADBError("新服务没有重新启动，检测到仍在使用旧进程")
         verify_remote_service(adb, serial, package.version, progress)
+        install_healthy = True
+        progress("部署健康检查通过")
         return f"http://{ip}:{port}", password
+
     except Exception:
-        # Preserve a working installation when a new version fails to launch.
-        if VERSION_RE.fullmatch(current) and current != target:
+        if stopped:
+            progress("部署失败，尝试恢复原有服务")
             try:
-                adb.shell(serial, "rm", "-f", remote + "/current.new")
-                adb.shell(serial, "ln", "-s", current, remote + "/current.new")
-                adb.shell(serial, "mv", "-f", remote + "/current.new", remote + "/current")
-                adb.shell(serial, "sh", remote + "/start.sh", f"{ip}:{port}")
-                progress("已尝试恢复旧版本")
+                # New startup script could be broken: stop it before restoring files.
+                try:
+                    adb.shell(serial, "sh", remote + "/stop.sh", timeout=12)
+                except ADBError:
+                    pass
+                if old_exists:
+                    for live, backup in zip(script_files, script_backups):
+                        adb.shell(serial, "mv", "-f", backup, live, timeout=12)
+                    if replacing_current:
+                        adb.shell(serial, "mv", "-f", old_binary_backup, base + "/desktopd", timeout=12)
+                    adb.shell(serial, "rm", "-f", remote + "/current.new")
+                    adb.shell(serial, "ln", "-s", old_link, remote + "/current.new")
+                    adb.shell(serial, "mv", "-f", remote + "/current.new", remote + "/current")
+                    adb.shell(serial, "sh", remote + "/start.sh", f"{ip}:{port}", timeout=15)
+                    progress("已尝试启动上一版本")
+                elif switched:
+                    adb.shell(serial, "rm", "-f", remote + "/current", timeout=10)
+                    progress("首次安装失败，已撤销无效版本指针")
             except Exception:
-                progress("旧版本自动恢复失败，请检查设备日志")
-        elif not VERSION_RE.fullmatch(current):
-            # A failed first-time install must not appear as an installed version.
-            try:
-                adb.shell(serial, "sh", remote + "/stop.sh", timeout=12)
-                adb.shell(serial, "rm", "-f", remote + "/current", timeout=12)
-                progress("首装失败：已撤销版本指针")
-            except Exception:
-                progress("首装失败：清理未完成，请检查设备日志")
+                progress("恢复过程失败，请检查设备端日志与备份")
         raise
+    finally:
+        # Removing stage and optional rollback files never touches a running
+        # executable. Do not let cleanup failures mask the original result.
+        for path in (stage_binary, stage_start, stage_stop, remote + "/current.new"):
+            try:
+                adb.shell(serial, "rm", "-f", path, timeout=6)
+            except ADBError:
+                pass
+        # Keep rollback material when an attempted recovery has failed.
+        if install_healthy or not stopped:
+            for path in (old_binary_backup, *script_backups):
+                try:
+                    adb.shell(serial, "rm", "-f", path, timeout=6)
+                except ADBError:
+                    pass
 
 
 def uninstall_from_device(adb: ADB, serial: str) -> str:

@@ -33,6 +33,10 @@ if "%~3"=="push" (echo upload success & exit /b 0)
 if "%~3"=="shell" (
   if "%~4"=="getprop" (echo arm64-v8a & exit /b 0)
   if "%~4"=="ip" (echo 2: wlan0 inet 192.168.1.20/24 brd 192.168.1.255 scope global wlan0 & exit /b 0)
+  if "%~4"=="readlink" (
+    if "%AWD_TEST_CURRENT%"=="same" echo releases/2.0.0/desktopd
+    exit /b 0
+  )
   if "%~4"=="cat" (echo 0123456789abcdef0123456789abcdef & exit /b 0)
   if "%~4"=="sh" (echo Launch requested & exit /b 0)
 )
@@ -76,6 +80,15 @@ try {
     throw ("Full simulated installation failed: " + $output)
   }
   Write-Host "PASS: end-to-end installation (mock ADB)"
+  $env:AWD_TEST_CURRENT="same"
+  $ErrorActionPreference = "Continue"
+  $blocked = (& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath -AdbPath $mock -NonInteractive 2>&1 | Out-String)
+  $ErrorActionPreference = $previousPreference
+  if ($LASTEXITCODE -eq 0 -or $blocked -notmatch "already installed") {
+    throw ("Same-version install should be safely refused: " + $blocked)
+  }
+  Write-Host "PASS: same-version reinstall guard (mock ADB)"
 } finally {
+  $env:AWD_TEST_CURRENT=""
   Remove-Item -LiteralPath $versionFile,$binaryFile -ErrorAction SilentlyContinue
 }

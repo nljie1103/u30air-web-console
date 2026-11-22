@@ -140,6 +140,50 @@ class TestDeployment(unittest.TestCase):
         self.assertIn("卸载", response)
         self.assertEqual(fake.commands[-1][-2:], ("-rf", adb_client.DATA_DIR))
 
+    def test_same_version_reinstall_uses_staging_and_backup(self):
+        fake = FakeADB()
+        fake.version = "releases/2.1.0/desktopd"
+        with patch.object(deployment, "verify_remote_service") as health:
+            url, password = deployment.install_on_device(
+                fake, "usb-1", deployment.parse_package(package_zip()), "192.168.0.1"
+            )
+        health.assert_called_once()
+        self.assertEqual(url, "http://192.168.0.1:8765")
+        uploads = [c for c in fake.commands if c[0] == "selected" and "push" in c]
+        self.assertTrue(any(c[-1].endswith("desktopd.next") for c in uploads))
+        self.assertFalse(any(c[-1].endswith("/desktopd") for c in uploads))
+        backups = [i for i, c in enumerate(fake.commands) if c[0] == "shell" and c[2] == "cp"]
+        stops = [i for i, c in enumerate(fake.commands) if c[0] == "shell" and c[2:4] == ("sh", adb_client.DATA_DIR + "/stop.sh")]
+        self.assertGreaterEqual(len(backups), 3)
+        self.assertTrue(stops)
+        self.assertLess(max(backups), min(stops))
+        self.assertTrue(any(c[-2:] == ("-f", adb_client.DATA_DIR + "/releases/2.1.0/desktopd.rollback") for c in fake.commands))
+
+    def test_same_version_failure_restores_executable(self):
+        fake = FakeADB()
+        fake.version = "releases/2.1.0/desktopd"
+        with patch.object(deployment, "verify_remote_service", side_effect=adb_client.ADBError("new server crashed")):
+            with self.assertRaisesRegex(adb_client.ADBError, "new server crashed"):
+                deployment.install_on_device(fake, "usb-1", deployment.parse_package(package_zip()), "192.168.0.1")
+        commands = fake.commands
+        self.assertTrue(any(c[2:5] == ("mv", "-f", adb_client.DATA_DIR + "/releases/2.1.0/desktopd.rollback") for c in commands))
+        self.assertFalse(any(c[2:5] == ("rm", "-f", adb_client.DATA_DIR + "/releases/2.1.0/desktopd.rollback") for c in commands))
+
+    def test_refuses_old_pid_without_new_process(self):
+        fake = FakeADB()
+        fake.version = "releases/2.1.0/desktopd"
+        old_shell = fake.shell
+        def with_pid(serial, *args, timeout=20):
+            if args == ("cat", adb_client.DATA_DIR + "/server.pid"):
+                fake.commands.append(("shell", serial, *args))
+                return "1234"
+            return old_shell(serial, *args, timeout=timeout)
+        fake.shell = with_pid
+        with patch.object(deployment, "verify_remote_service") as health:
+            with self.assertRaisesRegex(adb_client.ADBError, "旧进程"):
+                deployment.install_on_device(fake, "usb-1", deployment.parse_package(package_zip()), "192.168.0.1")
+        health.assert_not_called()
+
     def test_install_restore_old_version_when_start_fails(self):
         fake = FakeADB()
         fake.fail_start = True

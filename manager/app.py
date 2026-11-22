@@ -11,7 +11,7 @@ from urllib.request import urlopen
 from bridge import DesktopBridge
 from local_server import start_frontend_server
 
-APP_VERSION = "2.2.1"
+APP_VERSION = "2.2.2"
 
 
 def frontend_file() -> Path:

@@ -68,18 +68,19 @@ try {
     };
     window.pywebview = {
       api: {
-        environment: track('environment', { version: '2.2.1', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
+        environment: track('environment', { version: '2.2.2', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
         list_devices: track('list_devices', [{ serial: 'USB-TEST-001', state: 'device', detail: 'mock device' }]),
         device_info: track('device_info', {
           brand: 'Google', model: 'Pixel Test', android: '16', abi: 'arm64-v8a',
-          installed_version: '2.2.1', ips: ['192.168.1.20'], build: 'TEST-BUILD',
+          installed_version: '2.2.2', ips: ['192.168.1.20'], build: 'TEST-BUILD',
         }),
         list_apps: track('list_apps', [
           { name: 'com.example.one', system: false, disabled: false },
           { name: 'org.sample.two', system: false, disabled: false },
         ]),
         get_logs: track('get_logs', []),
-        check_release: track('check_release', { version: '2.2.2', notes: '浏览器端到端测试更新说明' }),
+        clear_logs: track('clear_logs', true),
+        check_release: track('check_release', { version: '2.2.3', notes: '浏览器端到端测试更新说明' }),
       },
     };
   });
@@ -100,12 +101,17 @@ try {
   assert.equal(await page.locator('.data-table tbody tr').count(), 1);
   console.log('PASS app list and search');
 
+  await page.locator('button.nav-item[title="运行日志"]').click();
+  await page.getByRole('button', { name: /清空日志/ }).click();
+  await page.waitForFunction(() => window.__mockCalls.some(c => c.name === 'clear_logs'));
+  console.log('PASS backend log clearing action');
+
   await page.locator('button.nav-item[title="部署与更新"]').click();
   assert.equal((await page.locator('.page-content h1').textContent()).trim(), '部署与更新');
   await page.getByRole('button', { name: /检查新版本/ }).click();
-  await page.getByText('v2.2.2', { exact: true }).waitFor({ state: 'visible' });
+  await page.getByText('v2.2.3', { exact: true }).waitFor({ state: 'visible' });
   const calls = await page.evaluate(() => window.__mockCalls.map(c => c.name));
-  for (const name of ['environment', 'list_devices', 'device_info', 'list_apps', 'check_release']) {
+  for (const name of ['environment', 'list_devices', 'device_info', 'list_apps', 'check_release', 'clear_logs']) {
     assert(calls.includes(name), 'UI did not call API ' + name);
   }
   assert.deepEqual(failures, [], 'Unexpected frontend JavaScript exception');
