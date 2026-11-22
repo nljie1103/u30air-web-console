@@ -81,7 +81,7 @@ def validate_lan_endpoint(value: str) -> str:
     if not match:
         raise ValueError("请输入局域网 IPv4 地址，例如 192.168.1.20:5555")
     ip = ipaddress.ip_address(match.group(1))
-    if not isinstance(ip, ipaddress.IPv4Address) or not ip.is_private or ip.is_loopback or ip.is_link_local:
+    if not isinstance(ip, ipaddress.IPv4Address) or not ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
         raise ValueError("仅允许私有局域网 IPv4 地址")
     port = int(match.group(2) or 5555)
     if not 1 <= port <= 65535:

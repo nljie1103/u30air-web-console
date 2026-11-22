@@ -20,7 +20,7 @@
 
 | 组件 | 能力 |
 |:---|:---|
-| **Windows 图形化管理器** | 自动识别 ADB 设备、显示连接状态、设备型号、Android 系统和处理器信息 |
+| **Windows 图形化管理器** | Vue 3 可收缩侧边栏、设备总览、ADB 状态、型号、系统信息与快捷操作 |
 | **安装与卸载** | 从 GitHub 下载并校验最新版后部署；支持本地离线 ZIP、版本识别和一键卸载 |
 | **设备控制** | 局域网 ADB 连接、重启、关机、应用查询与普通应用卸载 |
 | **高级应用管理** | 可查询系统应用、停用和恢复非关键系统组件，操作前需要二次确认 |
@@ -37,7 +37,7 @@
 
 | 组件 | 运行要求 |
 |:---|:---|
-| Windows 管理器 | Windows 10/11 x64；EXE 无需额外安装 Python |
+| Windows 管理器 | Windows 10/11 x64、Microsoft WebView2 Runtime；EXE 不需额外安装 Python |
 | Android 设备 | ARM64（`arm64-v8a`）、可用的 ADB Shell |
 | ADB | 已连接并授权的 USB 调试设备，或已启用无线调试的 Android 设备 |
 | 网页控制 | 支持 JavaScript 的现代浏览器，能够连接设备局域网 IPv4 地址 |
@@ -77,7 +77,7 @@ bash installer/install_linux_mac.sh <ADB序列号> <设备局域网IPv4> 8765
 
 ## 🌐 网页桌面
 
-Windows 管理器可在安装后直接打开网页控制台。主区域展示 Android 屏幕画面，可以点击、滑动、使用返回、主页、最近任务和唤醒按钮。侧边区域提供应用列表、设备信息与更新入口。
+Windows 管理器采用 Vue 3 与 WebView2 渲染，左侧侧边栏支持展开和图标模式。可从工作台查看状态，切换设备管理、应用管理、部署与更新、日志和设置页面。安装后还可直接打开网页控制台。主区域展示 Android 屏幕画面，可以点击、滑动、使用返回、主页、最近任务和唤醒按钮。侧边区域提供应用列表、设备信息与更新入口。
 
 支持的操作受到 Android 系统权限限制。没有可截图的显示画面，或系统禁止通过 ADB 模拟触控时，相应功能可能不可用。需要实时帧率时，可以额外使用支持网页访问的 VNC 方案。
 
@@ -95,7 +95,7 @@ Windows 管理器可以同时识别多台设备，并区分 `device`、`unauthor
 
 | 层级 | 技术 | 用途 |
 |:---|:---|:---|
-| Windows 桌面 | Python 标准库 Tkinter、PyInstaller | 本地 GUI、ADB 操作、EXE 构建 |
+| Windows 桌面 | Vue 3、WebView2、Python、PyInstaller | 可折叠侧边栏、Windows 图形界面、ADB 操作与 EXE 构建 |
 | Android 服务 | Go | 局域网 HTTP 服务、鉴权、版本更新 |
 | 屏幕与输入 | Android `screencap`、`input`、`pm` | 获取画面、执行触控、列出应用 |
 | Web 前端 | 原生 HTML、CSS、JavaScript | 响应式控制页面 |
@@ -103,7 +103,7 @@ Windows 管理器可以同时识别多台设备，并区分 `device`、`unauthor
 
 ```text
 android-web-desktop/
-├── manager/                  # Windows 图形化管理器、ADB 和部署逻辑
+├── manager/                  # Windows 管理器 Python 后端、Vue 3 前端
 ├── web/                      # Android 本机网页控制台
 ├── installer/                # Android 首次部署脚本
 ├── tests/                    # Windows 管理器与接口测试
@@ -121,12 +121,14 @@ go test ./...
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o desktopd .
 ```
 
-Windows 管理器需要 Python 3.12 与 PyInstaller，在 Windows 终端执行：
+Windows 管理器需 Node.js 22、Python 3.12、WebView2 Runtime。先在仓库目录构建 Vue 3 前端，再打包 Windows EXE：
 
 ```powershell
+npm ci --prefix manager/frontend
+npm run build --prefix manager/frontend
 python -m unittest discover -s tests -p "test_manager_*.py"
-python -m pip install pyinstaller
-python -m PyInstaller --onefile --windowed --name AndroidWebDesktopManager manager/app.py
+python -m pip install pywebview==6.2.1 pyinstaller==6.22.3
+python -m PyInstaller --onefile --windowed --name AndroidWebDesktopManager --collect-all webview --add-data "manager/frontend/dist;manager/frontend/dist" manager/app.py
 ```
 
 ---

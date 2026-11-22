@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 build/
 *.spec
+
+manager/frontend/node_modules/
+manager/frontend/dist/
