@@ -92,3 +92,6 @@ try {
   $env:AWD_TEST_CURRENT=""
   Remove-Item -LiteralPath $versionFile,$binaryFile -ErrorAction SilentlyContinue
 }
+# Expected failure in the final negative test must not become this script's exit code.
+# Exceptions above still terminate this test with a nonzero status.
+exit 0
