@@ -2,13 +2,15 @@
 
 # 🖥️ Android Web Desktop
 
-**用浏览器查看和操作 Android 桌面。**
+**让 Android 设备管理和远程桌面操作更简单。**
 
-面向支持 ADB 的 Android 设备，提供一个可部署在设备本机的轻量网页控制台，适用于局域网设备维护与远程操作。
+提供 Windows 图形化设备管理器与设备本机网页桌面服务。通过 USB 或无线 ADB 部署一次，之后可在同一局域网的浏览器中查看和操作 Android。
 
 [![Latest Release](https://img.shields.io/github/v/release/nljie1103/u30air-web-console?style=for-the-badge)](https://github.com/nljie1103/u30air-web-console/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/nljie1103/u30air-web-console/release.yml?branch=main&style=for-the-badge)](https://github.com/nljie1103/u30air-web-console/actions)
-[![Platform](https://img.shields.io/badge/Android-ARM64-68768a?style=for-the-badge)](#system-requirements)
+[![Platform](https://img.shields.io/badge/Android-ARM64-63768b?style=for-the-badge)](#system-requirements)
+
+[**下载 Windows 管理器**](https://github.com/nljie1103/u30air-web-console/releases/latest/download/AndroidWebDesktopManager.exe) · [**下载 Android 安装包**](https://github.com/nljie1103/u30air-web-console/releases/latest/download/android-web-desktop-arm64.zip) · [**问题反馈**](https://github.com/nljie1103/u30air-web-console/issues)
 
 </div>
 
@@ -16,116 +18,132 @@
 
 ## ✨ 功能
 
-| 功能 | 说明 |
+| 组件 | 能力 |
 |:---|:---|
-| **网页屏幕预览** | 设备本地截图，通过浏览器定时刷新画面 |
-| **触控与系统按键** | 点击、滑动、主页、返回、最近任务、唤醒 |
-| **应用启动** | 搜索设备安装的第三方应用，并尝试打开其启动界面 |
-| **设备信息** | 显示设备型号、Android 版本和处理器架构 |
-| **手动在线更新** | 在网页内查看新版本与更新说明，确认后安装，支持失败回滚 |
+| **Windows 图形化管理器** | 自动识别 ADB 设备、显示连接状态、设备型号、Android 系统和处理器信息 |
+| **安装与卸载** | 从 GitHub 下载并校验最新版后部署；支持本地离线 ZIP、版本识别和一键卸载 |
+| **设备控制** | 局域网 ADB 连接、重启、关机、应用查询与普通应用卸载 |
+| **高级应用管理** | 可查询系统应用、停用和恢复非关键系统组件，操作前需要二次确认 |
+| **设备本机网页桌面** | 定时屏幕预览、点击与滑动、系统按键、用户应用启动 |
+| **网页内在线更新** | 手动检查 Release、验证 SHA256、切换版本，健康检查失败时尝试恢复旧版 |
 
-桌面画面来自 Android 系统自带的 `screencap`；当前是定时截图模式，**不是实时视频流**。如设备另行启用了带网页客户端的 VNC 服务，可通过控制台的快捷入口访问。
+网页端目前采用 Android 系统截图方式定时更新画面，**不是高帧率视频流**。系统组件停用不等于永久删除系统分区文件。
 
 ---
 
 <a id="system-requirements"></a>
 
-## 💻 系统要求与安全
+## 💻 运行环境与安全
 
-| 项目 | 要求 |
+| 组件 | 运行要求 |
 |:---|:---|
-| 目标设备 | 支持执行 ADB Shell 的 Android ARM64 设备（`arm64-v8a`） |
-| 首次安装 | 已安装 Android Platform Tools 的 Windows、macOS 或 Linux 电脑 |
-| 浏览器 | 支持 JavaScript 的现代桌面或移动浏览器 |
-| 网络 | 浏览器与设备可通过可信局域网访问；网页更新需设备能连接 GitHub |
+| Windows 管理器 | Windows 10/11 x64；EXE 无需额外安装 Python |
+| Android 设备 | ARM64（`arm64-v8a`）、可用的 ADB Shell |
+| ADB | 已连接并授权的 USB 调试设备，或已启用无线调试的 Android 设备 |
+| 网页控制 | 支持 JavaScript 的现代浏览器，能够连接设备局域网 IPv4 地址 |
+| 在线安装/更新 | Windows 管理器或设备可访问对应 GitHub Release |
 
-> **安全提示：** 控制台使用 HTTP，虽有登录口令，但通信内容未加密。请仅在可信局域网使用，不要将服务端口、ADB 或 VNC 端口直接映射到公网。屏幕捕获与输入权限受到 Android 版本和设备固件限制；部分设备可能无法显示屏幕或模拟触控。
+> **操作须知：** 首次安装需要设备已开启并授权 ADB；管理器无法绕过调试授权。网页控制台默认使用 HTTP，仅可用于可信局域网，禁止直接将网页端口、ADB 或 VNC 端口映射到公网。关机可能需要现场操作才能重新开机，停用系统组件可能造成设备功能异常；请先备份重要数据。
 
 ---
 
 ## 📥 下载与安装
 
-从 **[最新 Release](https://github.com/nljie1103/u30air-web-console/releases/latest)** 下载 `android-web-desktop-arm64.zip` 并解压。
+### Windows · 推荐
 
-### Windows
+1. 从 [最新 Release](https://github.com/nljie1103/u30air-web-console/releases/latest) 下载 **`AndroidWebDesktopManager.exe`** 并运行。
+2. 通过 USB 连接已授权的 Android 设备，或者点击 **连接局域网设备** 输入已开启无线 ADB 的地址。
+3. 如果系统尚未安装 ADB，可在管理器中选择现有 `adb.exe`，或手动确认下载 Google 官方 Platform Tools。
+4. 选择设备后，查看其型号、系统版本和网页桌面安装状态，点击 **一键安装 / 升级**。
+5. 安装成功后，管理器显示访问网址及首次登录口令，随后用浏览器打开设备网页桌面。
 
-1. 安装 [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools)。
-2. 在 Android 设备上开启调试权限并完成授权，使设备可通过 USB 或已开启的无线 ADB 与电脑连接。
-3. 双击解压目录中的 **`installer/install_windows.bat`**。
-4. 安装器检测设备；如果有多台设备，会要求选择。如果没有发现设备，会显示连接状态并提示下一步操作。
-5. 安装完成后，终端显示局域网访问网址和首次登录口令；使用浏览器访问即可。
+管理器也支持从 [Release](https://github.com/nljie1103/u30air-web-console/releases/latest) 下载完整 ARM64 ZIP 后点击 **选择本地安装包**，在没有互联网连接时部署。安装过程中不会刷写系统固件。
 
-无线 ADB 已启用的设备，也可给安装脚本传入 IP：
+### Linux / macOS · ADB 脚本
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\install_windows.ps1 -ConnectAddress 192.168.1.20:5555
-```
-
-安装器**不会替设备开启 ADB 调试**；设备的 USB 或无线调试必须事先可用并完成授权。
-
-### Linux / macOS
-
-前置条件同上。解压后进入安装包目录，运行：
+下载 `android-web-desktop-arm64.zip` 并解压，在安装包目录运行：
 
 ```bash
 bash installer/install_linux_mac.sh
 ```
 
-如有多台设备，或需要直接指定访问 IP：
+若连接多台设备或需要明确指定访问地址：
 
 ```bash
-bash installer/install_linux_mac.sh <ADB序列号> <设备局域网IPv4地址> 8765
+bash installer/install_linux_mac.sh <ADB序列号> <设备局域网IPv4> 8765
 ```
 
 ---
 
-## 🚀 使用说明
+## 🌐 网页桌面
 
-网页采用自适应布局，主区域展示 Android 画面；在画面上点击、拖动，或使用下方系统按钮执行操作。右侧可搜索已安装应用、查看设备信息和进行更新。
+Windows 管理器可在安装后直接打开网页控制台。主区域展示 Android 屏幕画面，可以点击、滑动、使用返回、主页、最近任务和唤醒按钮。侧边区域提供应用列表、设备信息与更新入口。
 
-应用列表来自系统返回的用户安装包名；它不等于每个软件都提供可直接启动的 Activity。设备若限制了截图或触控注入，控制台会显示相应错误。
-
-默认端口是 **8765**，实际访问 IP 由安装器识别或用户指定。后续使用网页中的 **检查更新** 与 **安装更新** 即可升级，无需重新安装整个程序。更新会保留本机管理密码，新版本健康检查失败时会尝试回滚。
+支持的操作受到 Android 系统权限限制。没有可截图的显示画面，或系统禁止通过 ADB 模拟触控时，相应功能可能不可用。需要实时帧率时，可以额外使用支持网页访问的 VNC 方案。
 
 ---
 
-## 🏗️ 技术与数据
+## 🔧 设备管理
 
-| 层级 | 实现 | 用途 |
+Windows 管理器可以同时识别多台设备，并区分 `device`、`unauthorized`、`offline` 等 ADB 状态。选择一台可用设备后，可查看其型号、品牌、系统构建号、ABI、局域网 IP，以及网页桌面是否已安装及其版本。
+
+**卸载网页桌面**会删除程序目录中的密码、日志和历史版本，需要确认；不删除其他 Android 应用。**卸载普通应用**针对当前主用户（user 0）操作，可能丢失应用数据；系统组件默认不会被直接卸载，只有经过明确包名确认的停用与恢复操作，并阻止一组已知关键系统包。
+
+---
+
+## 🛠️ 技术与项目结构
+
+| 层级 | 技术 | 用途 |
 |:---|:---|:---|
-| 后端 | Go（单文件 ARM64 程序） | 局域网 HTTP 服务、口令验证、更新与回滚 |
-| 桌面控制 | Android `screencap`、`input`、`pm` | 屏幕获取、触控与应用列表 |
-| 前端 | 原生 HTML / CSS / JavaScript | 响应式界面、图片显示、鼠标与触控 |
-| 发布 | GitHub Actions / Releases | 测试、构建与安装包分发 |
+| Windows 桌面 | Python 标准库 Tkinter、PyInstaller | 本地 GUI、ADB 操作、EXE 构建 |
+| Android 服务 | Go | 局域网 HTTP 服务、鉴权、版本更新 |
+| 屏幕与输入 | Android `screencap`、`input`、`pm` | 获取画面、执行触控、列出应用 |
+| Web 前端 | 原生 HTML、CSS、JavaScript | 响应式控制页面 |
+| 发布 | GitHub Actions / Releases | Windows EXE 与 Android ARM64 ZIP |
 
-程序默认存储在 `/data/local/tmp/android-web-desktop`。其中 `password.txt` 保存管理口令，`current` 指向当前程序版本，`releases/` 保存已安装的程序文件，`server.log` 和 `update.log` 用于诊断。
-
-**升级不删除上述配置。** 设备重启后是否自动启动取决于另外的服务启动配置；本安装器不擅自修改系统开机脚本。
+```text
+android-web-desktop/
+├── manager/                  # Windows 图形化管理器、ADB 和部署逻辑
+├── web/                      # Android 本机网页控制台
+├── installer/                # Android 首次部署脚本
+├── tests/                    # Windows 管理器与接口测试
+├── main.go                   # Android 后端入口
+├── update.go                 # Android 在线更新与回滚
+└── .github/workflows/        # 自动化测试、构建和发布
+```
 
 ### 源码构建
 
-需要 Go 1.23 或更高版本：
+Android 服务需要 Go 1.23 或更新版本：
 
 ```bash
 go test ./...
-go vet ./...
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o desktopd .
+```
+
+Windows 管理器需要 Python 3.12 与 PyInstaller，在 Windows 终端执行：
+
+```powershell
+python -m unittest discover -s tests -p "test_manager_*.py"
+python -m pip install pyinstaller
+python -m PyInstaller --onefile --windowed --name AndroidWebDesktopManager manager/app.py
 ```
 
 ---
 
-## 🔧 故障排查
+## 🔒 数据与更新
 
-| 现象 | 排查方式 |
-|:---|:---|
-| 安装器未发现设备 | 执行 `adb devices -l` 查看 USB/无线 ADB 状态及授权 |
-| 出现 `unauthorized` | 在目标设备上确认 USB 调试授权，之后重新检查 |
-| 出现 `offline` | 检查连接并重新建立 ADB 会话 |
-| 网页无法打开 | 核实设备局域网地址、安装器输出的 URL 与设备服务日志 |
-| 屏幕无法显示 | 检查系统是否允许 `screencap -p` 输出有效画面 |
-| 无法点击 | 检查 Android 系统对 `input` 命令及当前显示的限制 |
+设备上的默认目录是 `/data/local/tmp/android-web-desktop`，包含管理口令、运行日志、程序版本和当前版本符号链接。网页内安装更新时保留这些配置；通过管理器彻底卸载时删除该目录。Windows 管理器从 GitHub 发布页下载软件并校验 Release 提供的 SHA256 摘要；本地离线 ZIP 需要用户自己确认可信来源。
 
-反馈和改进建议可通过 [GitHub Issues](https://github.com/nljie1103/u30air-web-console/issues) 提交。
+Windows 管理器依赖的 ADB 工具可从 Google 官方 Platform Tools 下载，首次下载时需要用户确认；本项目不把第三方工具重新打包为自己的程序。当前尚未添加独立的数字签名，下载后的 EXE 可能触发 Windows SmartScreen 提示。
+
+---
+
+## 🤝 反馈与维护
+
+欢迎在 [Issues](https://github.com/nljie1103/u30air-web-console/issues) 反馈设备兼容问题及功能建议。
+
+项目功能设计参考 [Universal Android Debloater NG](https://github.com/Universal-Debloater-Alliance/universal-android-debloater-next-generation)、[Aya](https://github.com/liriliri/aya) 和 [scrcpy](https://github.com/Genymobile/scrcpy) 的使用体验；本项目的设备管理和网页控制代码独立实现，未直接复制这些项目的代码。
 
 ---
 

@@ -13,9 +13,34 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: 检查安装器及模拟 ADB 状态
+      - name: 检查 Windows 安装器和模拟 ADB
         shell: powershell
         run: ./tests/windows-adb-tests.ps1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 测试 Windows 管理器核心逻辑
+        shell: pwsh
+        run: |
+          python -m compileall -q manager
+          python -m unittest discover -s tests -p "test_manager_*.py" -v
+          python manager/app.py --self-test
+      - name: 构建 Windows GUI EXE
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pyinstaller==6.12.0
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name AndroidWebDesktopManager manager/app.py
+          if (!(Test-Path -LiteralPath "dist/AndroidWebDesktopManager.exe")) { throw "Windows EXE was not generated" }
+          $exe = (Resolve-Path "dist/AndroidWebDesktopManager.exe").Path
+          $test = Start-Process -FilePath $exe -ArgumentList "--gui-smoke-test" -PassThru -Wait
+          if ($test.ExitCode -ne 0) { throw "Windows GUI executable smoke test failed: $($test.ExitCode)" }
+          Write-Host "GUI EXE smoke test passed"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-manager
+          path: dist/AndroidWebDesktopManager.exe
+          if-no-files-found: error
+          retention-days: 7
 
   verify:
     needs: windows
@@ -26,7 +51,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: 验证版本与代码
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-manager
+          path: dist/windows
+      - name: 验证源码、语法与版本
         shell: bash
         run: |
           set -euo pipefail
@@ -34,10 +63,14 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           test "$GITHUB_REF_TYPE" != "tag" || test "$GITHUB_REF_NAME" = "v$VERSION"
           git log -1 --format=%s | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+：.+$'
+          grep -Fq "APP_VERSION = \"$VERSION\"" manager/app.py
+          test -s dist/windows/AndroidWebDesktopManager.exe
           go test ./...
           go vet ./...
           node --check web/app.js
           bash -n installer/install_linux_mac.sh
+          python3 -m unittest discover -s tests -p "test_manager_*.py"
+          python3 -m compileall -q manager
       - name: 打包 Android ARM64
         shell: bash
         run: |
@@ -50,7 +83,7 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o dist/package/desktopd .
           (cd dist/package && zip -q -r ../android-web-desktop-arm64.zip README.md VERSION desktopd installer)
           unzip -t dist/android-web-desktop-arm64.zip | tail -1
-          sha256sum dist/android-web-desktop-arm64.zip
+          sha256sum dist/android-web-desktop-arm64.zip dist/windows/AndroidWebDesktopManager.exe
       - name: 发布中文 Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -61,7 +94,7 @@ jobs:
           VERSION=$(jq -r .version version.json)
           TITLE=$(jq -r .title version.json)
           jq -r .notes version.json > dist/notes.md
-          gh release create "v$VERSION" dist/android-web-desktop-arm64.zip \
+          gh release create "v$VERSION" dist/android-web-desktop-arm64.zip dist/windows/AndroidWebDesktopManager.exe \
             --title "v$VERSION｜$TITLE" \
             --notes-file dist/notes.md \
             --verify-tag
