@@ -47,10 +47,15 @@ jobs:
           if ($check.ExitCode -ne 0) { throw "Packaged frontend / bridge smoke test failed: $($check.ExitCode)" }
           $gui = Start-Process -FilePath $exe -ArgumentList "--gui-smoke-test" -PassThru
           try {
-            $gui.WaitForExit(50000) | Out-Null
-            if (!$gui.HasExited) { throw "WebView2 GUI launch timed out" }
-            if ($gui.ExitCode -ne 0) { throw "WebView2 GUI launch failed: $($gui.ExitCode)" }
+            $gui.WaitForExit(45000) | Out-Null
+            $gui.Refresh()
+            if (!$gui.HasExited) { throw "WebView2 GUI integration test timed out" }
+            if ($gui.ExitCode -ne 0) { throw "WebView2 GUI integration test failed: $($gui.ExitCode)" }
           } finally {
+            $smokeLog = Join-Path $env:TEMP "awd-webview2-smoke.log"
+            if (Test-Path -LiteralPath $smokeLog) {
+              Write-Host "WebView2 integration diagnostic:"; Get-Content -LiteralPath $smokeLog -Tail 80
+            }
             if (!$gui.HasExited) { Stop-Process -Id $gui.Id -Force -ErrorAction SilentlyContinue }
           }
           Write-Host "Vue 3 WebView2 EXE smoke tests passed"
