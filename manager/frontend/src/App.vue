@@ -59,6 +59,8 @@ const toast = ref<{ type: 'success' | 'error' | 'info'; message: string } | null
 let noticeTimer: ReturnType<typeof setTimeout> | undefined
 let timer: ReturnType<typeof setInterval> | undefined
 let initialized = false
+let initializing = false
+let bridgePoll: ReturnType<typeof setInterval> | undefined
 const preview = new URLSearchParams(window.location.search).has('preview')
 
 const onlineCount = computed(() => devices.value.filter(d => d.state === 'device').length)
@@ -331,24 +333,29 @@ async function initialize() {
   if (initialized) return
   if (preview) { initialized = true; previewSetup(); return }
   if (!window.pywebview?.api) return
-  initialized = true
+  if (initializing) return
+  initializing = true
   try {
     const result = await invoke<any>('environment')
     envVersion.value = result.version
     adbPath.value = result.adb_path
     ready.value = true
+    initialized = true
+    if (bridgePoll) clearInterval(bridgePoll)
     if (result.adb_found) await refreshDevices()
     else showToast('尚未发现 ADB，可以在设置中下载官方工具', 'info')
     timer = setInterval(() => { void getLogs() }, 2500)
   } catch (cause: any) { error.value = String(cause); ready.value = true }
+  finally { initializing = false }
 }
 onMounted(() => {
   try { collapsed.value = localStorage.getItem('awd-sidebar-collapsed') === 'true' } catch { /* ignored */ }
   void initialize()
   window.addEventListener('pywebviewready', initialize)
-  setTimeout(() => { void initialize() }, 500)
+  bridgePoll = setInterval(() => { if (!initialized) void initialize() }, 250)
 })
 onUnmounted(() => {
+  if (bridgePoll) clearInterval(bridgePoll)
   window.removeEventListener('pywebviewready', initialize)
   if (timer) clearInterval(timer)
   if (noticeTimer) clearTimeout(noticeTimer)

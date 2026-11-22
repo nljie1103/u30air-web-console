@@ -22,7 +22,7 @@ class TestDesktopBridge(unittest.TestCase):
 
     def test_version_and_config(self):
         env = self.bridge.environment()
-        self.assertEqual(env["version"], "2.2.0")
+        self.assertEqual(env["version"], "2.2.1")
         self.assertIn("adb_found", env)
         self.assertTrue(Path(self.bridge.settings_file).parent.is_dir())
 

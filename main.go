@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -405,14 +406,20 @@ func main() {
 	}
 	a := &app{addr: *addr, state: *state, password: passwordAt(*state), secret: randomBytes(32), httpClient: &http.Client{Timeout: 45 * time.Second}}
 	_ = os.WriteFile(filepath.Join(*state, "server.pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0600)
+	var serverReady atomic.Bool
+	if err := startLocalHealth(*state, &serverReady); err != nil {
+		log.Fatal("cannot launch local readiness check: ", err)
+	}
 	server := &http.Server{Addr: *addr, Handler: a.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 100 * time.Second, IdleTimeout: 20 * time.Second, MaxHeaderBytes: 8192}
 	for {
 		listener, err := net.Listen("tcp", *addr)
 		if err != nil {
+			serverReady.Store(false)
 			log.Printf("等待局域网 IP %s：%v", *addr, err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
+		serverReady.Store(true)
 		log.Printf("Android Web Desktop %s listening %s", version, *addr)
 		log.Fatal(server.Serve(listener))
 	}

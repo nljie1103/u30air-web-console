@@ -128,7 +128,9 @@ class TestDeployment(unittest.TestCase):
     def test_install_and_uninstall(self):
         fake = FakeADB()
         package = deployment.parse_package(package_zip())
-        url, password = deployment.install_on_device(fake, "usb-1", package, "192.168.0.1")
+        with patch.object(deployment, "verify_remote_service") as health:
+            url, password = deployment.install_on_device(fake, "usb-1", package, "192.168.0.1")
+        health.assert_called_once()
         self.assertEqual(url, "http://192.168.0.1:8765")
         self.assertEqual(len(password), 32)
         self.assertTrue(any("push" in c for c in fake.commands))
@@ -146,11 +148,76 @@ class TestDeployment(unittest.TestCase):
         restores = [c for c in fake.commands if "releases/2.0.0/desktopd" in c]
         self.assertTrue(restores)
 
+    def test_install_rolls_back_when_health_fails(self):
+        fake = FakeADB()
+        with patch.object(deployment, "verify_remote_service", side_effect=adb_client.ADBError("service not ready")):
+            with self.assertRaisesRegex(adb_client.ADBError, "service not ready"):
+                deployment.install_on_device(fake, "usb-1", deployment.parse_package(package_zip()), "192.168.0.1")
+        self.assertTrue(any("releases/2.0.0/desktopd" in command for command in fake.commands))
+
+    def test_first_install_failure_clears_version_pointer(self):
+        fake = FakeADB()
+        fake.version = ""
+        with patch.object(deployment, "verify_remote_service", side_effect=adb_client.ADBError("health unavailable")):
+            with self.assertRaises(adb_client.ADBError):
+                deployment.install_on_device(fake, "usb-1", deployment.parse_package(package_zip()), "192.168.0.1")
+        self.assertTrue(any(c[-3:] == ("rm", "-f", adb_client.DATA_DIR+"/current") for c in fake.commands))
+
+    def test_adb_forwarded_health_verification(self):
+        import io
+        class Response:
+            status = 200
+            def __init__(self, data):
+                self.data = data
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+            def read(self, *_): return self.data
+        class Opener:
+            def __init__(self, payload): self.payload = payload
+            def open(self, url, timeout):
+                if url != "http://127.0.0.1:33861/healthz":
+                    raise AssertionError("Health target must remain loopback only")
+                return Response(self.payload)
+        fake = FakeADB()
+        original_shell = fake.shell
+        def read_health_port(serial, *args, timeout=20):
+            if args == ("cat", adb_client.DATA_DIR+"/health.port"):
+                return "37123"
+            return original_shell(serial, *args, timeout=timeout)
+        fake.shell = read_health_port
+        original_selected = fake.selected
+        def forward(serial, *args, timeout=20):
+            if args == ("forward", "tcp:0", "tcp:37123"):
+                fake.commands.append(("forward", serial, *args))
+                return "33861"
+            return original_selected(serial, *args, timeout=timeout)
+        fake.selected = forward
+        data = b'{"status":"ok","version":"2.2.1","ready":true}'
+        with patch.object(deployment, "build_opener", return_value=Opener(data)):
+            deployment.verify_remote_service(fake, "usb-1", "2.2.1")
+        self.assertTrue(any("forward" in c and "--remove" in c for c in fake.commands))
+        bad = b'{"status":"ok","version":"2.2.0","ready":true}'
+        with patch.object(deployment, "build_opener", return_value=Opener(bad)):
+            with patch.object(deployment.time, "sleep"):
+                with self.assertRaisesRegex(adb_client.ADBError, "版本"):
+                    deployment.verify_remote_service(fake, "usb-1", "2.2.1")
+
+    def test_invalid_install_ip(self):
+        for ip in ("0.0.0.0", "127.0.0.1", "8.8.8.8", "169.254.0.5"):
+            with self.subTest(ip=ip), self.assertRaises(ValueError):
+                deployment.install_on_device(FakeADB(), "usb-1", deployment.parse_package(package_zip()), ip)
+
     def test_remove_core_apps_blocked(self):
         fake = FakeADB()
-        with patch.object(fake, "packages", return_value=["com.android.systemui", "com.vendor.feature"]):
-            with self.assertRaisesRegex(ValueError, "关键"):
-                adb_client.ADB.toggle_system_app(fake, "usb-1", "com.android.systemui", False)
+        with patch.object(fake, "packages", return_value=[
+            "com.android.systemui", "com.google.android.gms", "com.google.android.webview",
+            "com.android.tethering", "com.vendor.feature"
+        ]):
+            for package in ("com.android.systemui", "com.google.android.gms",
+                            "com.google.android.webview", "com.android.tethering"):
+                with self.subTest(package=package):
+                    with self.assertRaisesRegex(ValueError, "关键"):
+                        adb_client.ADB.toggle_system_app(fake, "usb-1", package, False)
             with self.assertRaisesRegex(ValueError, "不合法"):
                 adb_client.ADB.toggle_system_app(fake, "usb-1", "com.vendor.feature;rm", False)
 

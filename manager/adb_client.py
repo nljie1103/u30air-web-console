@@ -17,14 +17,56 @@ from dataclasses import dataclass
 DATA_DIR = "/data/local/tmp/android-web-desktop"
 PKG_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$")
 VERSION_RE = re.compile(r"^releases/(\d+\.\d+\.\d+)/desktopd$")
+# Conservative denylist for packages that may remove boot, network, UI or ADB access.
+# Not exhaustive: platform-specific safety is enforced by explicit UI confirmation too.
+CRITICAL_EXACT = frozenset({
+    "android",
+    "com.android.systemui",
+    "com.android.settings",
+    "com.android.shell",
+    "com.android.phone",
+    "com.android.bluetooth",
+    "com.android.keychain",
+    "com.android.externalstorage",
+    "com.android.nfc",
+    "com.android.carrierconfig",
+    "com.android.tethering",
+    "com.android.adbd",
+    "com.android.launcher",
+    "com.android.launcher3",
+    "com.android.webview",
+    "com.android.networkstack",
+    "com.android.permissioncontroller",
+    "com.android.packageinstaller",
+    "com.android.captiveportallogin",
+    "com.android.inputdevices",
+    "com.android.documentsui",
+    "com.google.android.gms",
+    "com.google.android.gsf",
+    "com.google.android.webview",
+    "com.google.android.networkstack",
+    "com.google.android.tethering",
+    "com.google.android.permissioncontroller",
+    "com.google.android.packageinstaller",
+    "com.google.android.apps.nexuslauncher",
+    "com.google.android.setupwizard",
+    "com.google.android.inputmethod.latin",
+})
 CRITICAL_PREFIXES = (
-    "android", "com.android.systemui", "com.android.settings", "com.android.shell",
-    "com.android.providers.", "com.google.android.packageinstaller",
-    "com.android.packageinstaller", "com.android.permissioncontroller",
-    "com.google.android.permissioncontroller", "com.android.server.",
-    "com.android.phone", "com.android.bluetooth", "com.android.launcher",
-    "com.google.android.apps.nexuslauncher", "com.android.inputmethod",
+    "android.",
+    "com.android.providers.",
+    "com.google.android.providers.",
+    "com.android.server.",
+    "com.android.networkstack.",
+    "com.google.android.networkstack.",
+    "com.android.telephony.",
+    "com.android.wifi.",
+    "com.android.inputmethod.",
+    "com.android.permissioncontroller.",
+    "com.google.android.permissioncontroller.",
+    "com.google.android.gms.",
 )
+
 
 
 class ADBError(RuntimeError):
@@ -94,7 +136,7 @@ def parse_lan_ips(output: str) -> list[str]:
     for value in re.findall(r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3})/\d+", output):
         try:
             ip = ipaddress.ip_address(value)
-            if isinstance(ip, ipaddress.IPv4Address) and ip.is_private and not ip.is_link_local and not ip.is_loopback:
+            if isinstance(ip, ipaddress.IPv4Address) and ip.is_private and not ip.is_link_local and not ip.is_loopback and not ip.is_unspecified:
                 if value not in ips:
                     ips.append(value)
         except ValueError:
@@ -188,7 +230,7 @@ class ADB:
     def toggle_system_app(self, serial: str, package: str, enabled: bool) -> str:
         if not PKG_RE.fullmatch(package):
             raise ValueError("应用包名不合法")
-        if any(package == value or package.startswith(value) for value in CRITICAL_PREFIXES):
+        if package in CRITICAL_EXACT or package.startswith(CRITICAL_PREFIXES):
             raise ValueError("已阻止对系统关键组件的操作")
         if package not in self.packages(serial, system=True):
             raise ValueError("不是当前系统组件")

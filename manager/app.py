@@ -4,12 +4,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
-import threading
 import time
 
 from bridge import DesktopBridge
 
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.2.1"
 
 
 def frontend_file() -> Path:
@@ -52,19 +51,62 @@ def main() -> None:
     )
     bridge.window = window
 
-    def on_ready():
-        if args.gui_smoke_test:
-            # A real smoke test must create a WebView2 window and load the Vue UI.
-            def close_later():
-                time.sleep(4)
-                try:
-                    window.destroy()
-                except Exception:
-                    pass
-            threading.Thread(target=close_later, daemon=True).start()
+    smoke = {"ok": False, "reason": "Vue 页面未就绪"}
 
-    # WebView2 is the native Windows rendering engine used by pywebview.
+    def on_ready():
+        if not args.gui_smoke_test:
+            return
+        try:
+            for attempt in range(42):
+                try:
+                    result = window.evaluate_js("""(() => ({
+                        vue: !!document.querySelector('#app .app-root'),
+                        nav: document.querySelectorAll('.nav-item').length,
+                        bridge: typeof window.pywebview?.api?.environment === 'function'
+                    }))()""")
+                    if isinstance(result, dict) and result.get("vue") and result.get("nav") == 6 and result.get("bridge"):
+                        break
+                except Exception as exc:
+                    smoke["reason"] = str(exc)
+                time.sleep(0.35)
+            else:
+                raise RuntimeError("Vue 未渲染六个导航项或 Python API 未注入")
+
+            # A ready JS function is not enough: invoke the Python bridge and await its result.
+            window.evaluate_js("""(() => {
+                window.__awdSmoke = {done:false};
+                window.pywebview.api.environment()
+                  .then(r => { window.__awdSmoke = {done:true,version:r.version}; })
+                  .catch(e => { window.__awdSmoke = {done:true,error:String(e)}; });
+            })()""")
+            for attempt in range(24):
+                result = window.evaluate_js("window.__awdSmoke")
+                if isinstance(result, dict) and result.get("done"):
+                    if result.get("version") != APP_VERSION:
+                        raise RuntimeError("Python 桥接返回异常：" + repr(result))
+                    break
+                time.sleep(0.3)
+            else:
+                raise RuntimeError("Vue 无法调用 Python environment 接口")
+
+            before = window.evaluate_js("document.querySelector('.app-root').classList.contains('sidebar-closed')")
+            window.evaluate_js("document.querySelector('.sidebar-toggle').click()")
+            time.sleep(0.2)
+            after = window.evaluate_js("document.querySelector('.app-root').classList.contains('sidebar-closed')")
+            if before == after:
+                raise RuntimeError("侧边栏收缩交互未生效")
+            smoke["ok"] = True
+        except Exception as exc:
+            smoke["reason"] = str(exc)
+        finally:
+            try:
+                window.destroy()
+            except Exception:
+                pass
+
     webview.start(on_ready, gui="edgechromium", debug=False)
+    if args.gui_smoke_test and not smoke["ok"]:
+        raise SystemExit("WebView2 GUI integration smoke test failed: " + smoke["reason"])
 
 
 if __name__ == "__main__":

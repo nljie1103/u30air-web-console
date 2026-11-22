@@ -8,6 +8,9 @@ import json
 from pathlib import Path
 import re
 import tempfile
+import time
+from urllib.error import URLError
+from urllib.request import build_opener, ProxyHandler
 from urllib.request import Request, urlopen
 from zipfile import ZipFile
 import io
@@ -115,9 +118,53 @@ def parse_package(content: bytes) -> Package:
     return Package(version, files)
 
 
+
+def verify_remote_service(adb: ADB, serial: str, version: str, progress=lambda _: None) -> None:
+    """Verify the Android service through a local ADB-forwarded health endpoint.
+
+    Unlike reading a password or symlink, this proves the expected version has
+    actually started and has bound its LAN HTTP listener.
+    """
+    last_error: Exception | None = None
+    opener = build_opener(ProxyHandler({}))
+    for attempt in range(14):
+        forward_port: str | None = None
+        try:
+            health_port = adb.shell(serial, "cat", DATA_DIR + "/health.port", timeout=6).strip()
+            if not re.fullmatch(r"[0-9]{1,5}", health_port) or not (1 <= int(health_port) <= 65535):
+                raise ADBError("设备健康检查端口无效")
+            forward_port = adb.selected(
+                serial, "forward", "tcp:0", "tcp:" + health_port, timeout=6
+            ).strip()
+            if not re.fullmatch(r"[0-9]{1,5}", forward_port) or not (1 <= int(forward_port) <= 65535):
+                raise ADBError("ADB forward 没有返回有效的本地端口")
+            with opener.open("http://127.0.0.1:" + forward_port + "/healthz", timeout=1.5) as response:
+                if response.status != 200:
+                    raise ADBError("健康检查 HTTP 状态码异常")
+                data = json.loads(response.read(2048))
+            if data.get("status") == "ok" and data.get("version") == version and data.get("ready") is True:
+                progress("服务健康检查通过，网页端口已监听")
+                return
+            if data.get("version") != version:
+                raise ADBError("启动的服务版本与安装包不一致")
+            raise ADBError("Android 网页服务尚未监听局域网端口")
+        except (ADBError, OSError, ValueError, URLError, json.JSONDecodeError) as exc:
+            last_error = exc
+            if attempt in (0, 4, 9):
+                progress("等待 Android 网页服务就绪…")
+            if attempt != 13:
+                time.sleep(0.5)
+        finally:
+            if forward_port:
+                try:
+                    adb.selected(serial, "forward", "--remove", "tcp:" + forward_port, timeout=6)
+                except ADBError:
+                    pass
+    raise ADBError("部署后健康检查未通过：" + str(last_error or "无响应"))
+
 def install_on_device(adb: ADB, serial: str, package: Package, ip: str, port: int = 8765, progress=lambda _: None) -> tuple[str, str]:
     parsed = ipaddress.ip_address(ip)
-    if parsed.version != 4 or not parsed.is_private or parsed.is_link_local or parsed.is_loopback:
+    if parsed.version != 4 or not parsed.is_private or parsed.is_link_local or parsed.is_loopback or parsed.is_unspecified:
         raise ValueError("访问 IP 必须是设备的私有局域网地址")
     if not (1024 <= port <= 65535):
         raise ValueError("不支持该网页端口")
@@ -152,6 +199,7 @@ def install_on_device(adb: ADB, serial: str, package: Package, ip: str, port: in
         password = adb.shell(serial, "cat", remote + "/password.txt", timeout=10).strip()
         if not re.fullmatch(r"[0-9a-f]{32}", password):
             raise ADBError("服务启动口令读取失败，请检查 server.log")
+        verify_remote_service(adb, serial, package.version, progress)
         return f"http://{ip}:{port}", password
     except Exception:
         # Preserve a working installation when a new version fails to launch.
@@ -164,6 +212,14 @@ def install_on_device(adb: ADB, serial: str, package: Package, ip: str, port: in
                 progress("已尝试恢复旧版本")
             except Exception:
                 progress("旧版本自动恢复失败，请检查设备日志")
+        elif not VERSION_RE.fullmatch(current):
+            # A failed first-time install must not appear as an installed version.
+            try:
+                adb.shell(serial, "sh", remote + "/stop.sh", timeout=12)
+                adb.shell(serial, "rm", "-f", remote + "/current", timeout=12)
+                progress("首装失败：已撤销版本指针")
+            except Exception:
+                progress("首装失败：清理未完成，请检查设备日志")
         raise
 
 
