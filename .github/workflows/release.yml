@@ -1,0 +1,67 @@
+name: 构建与发布
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检查安装器及模拟 ADB 状态
+        shell: powershell
+        run: ./tests/windows-adb-tests.ps1
+
+  verify:
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: 验证版本与代码
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(jq -r .version version.json)
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$GITHUB_REF_TYPE" != "tag" || test "$GITHUB_REF_NAME" = "v$VERSION"
+          git log -1 --format=%s | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+：.+$'
+          go test ./...
+          go vet ./...
+          node --check web/app.js
+          bash -n installer/install_linux_mac.sh
+      - name: 打包 Android ARM64
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(jq -r .version version.json)
+          mkdir -p dist/package/installer
+          cp README.md dist/package/README.md
+          cp installer/* dist/package/installer/
+          printf '%s\n' "$VERSION" > dist/package/VERSION
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o dist/package/desktopd .
+          (cd dist/package && zip -q -r ../android-web-desktop-arm64.zip README.md VERSION desktopd installer)
+          unzip -t dist/android-web-desktop-arm64.zip | tail -1
+          sha256sum dist/android-web-desktop-arm64.zip
+      - name: 发布中文 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(jq -r .version version.json)
+          TITLE=$(jq -r .title version.json)
+          jq -r .notes version.json > dist/notes.md
+          gh release create "v$VERSION" dist/android-web-desktop-arm64.zip \
+            --title "v$VERSION｜$TITLE" \
+            --notes-file dist/notes.md \
+            --verify-tag
