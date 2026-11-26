@@ -317,7 +317,7 @@ func (a *app) handler() http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 		defer cancel()
-		meta := a.metadata.get(ctx, pkg)
+		meta := a.metadata.get(ctx, a.state, pkg)
 		respond(w, 200, map[string]any{
 			"package": meta.Package, "label": meta.Label, "hasIcon": meta.HasIcon,
 		})
@@ -338,7 +338,7 @@ func (a *app) handler() http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 		defer cancel()
-		meta := a.metadata.get(ctx, pkg)
+		meta := a.metadata.get(ctx, a.state, pkg)
 		if !meta.HasIcon || len(meta.Icon) < 8 {
 			fail(w, 404, "icon unavailable")
 			return

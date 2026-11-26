@@ -1,20 +1,14 @@
 # Windows 客户端第三方软件声明
 
-## Qt for Python / PySide6 6.11.3
+## Wails v2.17.1 与 Microsoft WebView2
 
-Copyright © The Qt Company Ltd. and contributors.
+Windows 宿主使用 Wails（MIT）和系统 Microsoft WebView2 Runtime；不分发 Qt、Chromium 或 WebView2 固定运行库。Wails 运行依赖与对应许可证见 installer/host/go.mod、go.sum 与各上游项目。
 
-本项目 Windows 版本使用 Qt 6 的 QtCore、QtGui、QtWidgets、QtWebChannel 和 **QtWebEngineWidgets / QtWebEngineCore** 等模块及 PySide6 Python 绑定。QtWebEngine 内含基于 Chromium 的渲染组件，用于加载本地 Vue 3 界面，不依赖单独安装 Microsoft Edge。Qt for Python 社区版按 LGPLv3/GPLv3 或商业许可提供；请按照具体依赖组件对应的许可证履行义务。
+- Wails：https://github.com/wailsapp/wails
+- Wails 许可：https://github.com/wailsapp/wails/blob/master/LICENSE
+- Microsoft WebView2：https://developer.microsoft.com/microsoft-edge/webview2/
 
-- 官方项目：https://doc.qt.io/qtforpython-6/
-- LGPLv3 正文：https://www.gnu.org/licenses/lgpl-3.0.html
-- Qt 组件源码及许可证：https://code.qt.io/cgit/qt/
-
-Windows 便携版提供可替换的动态 Qt 运行库，独立 EXE 使用 PyInstaller 的运行时解包方式。对 QtWebEngine/Chromium 第三方组件请同时参考 Qt 官方源代码、许可证及随包提供的 QtWebEngine 资源声明。Windows 页面源码位于 installer/frontend/，Python Qt 桥接位于 installer/qt_window.py。
-
-- Qt WebEngine 模块许可：https://doc.qt.io/qt-6/qtwebengine-licensing.html
-- QtWebEngine 源码：https://code.qt.io/cgit/qt/qtwebengine.git/
-- Chromium 第三方许可证：https://chromium.googlesource.com/chromium/src/+/main/LICENSE
+Vue 3、Lucide 图标及 TypeScript 等组件见 installer/frontend/package.json 与对应许可证。
 
 ## Google Android SDK Platform-Tools
 

@@ -53,7 +53,7 @@ try {
       window.__calls.push({name,args});return response;
     };
     window.pywebview = { api: {
-      environment: capture('environment',{version:'2.5.2',adb_path:'C:\\Android\\adb.exe',adb_found:true}),
+      environment: capture('environment',{version:'2.5.3',adb_path:'C:\\Android\\adb.exe',adb_found:true}),
       list_devices: capture('list_devices',[
         {serial:'U30-AIR-TEST',state:'device'},
         {serial:'192.168.0.8:5555',state:'offline'}]),
@@ -70,7 +70,7 @@ try {
       choose_apk:capture('choose_apk','C:/Downloads/test.apk'),
       install_application:capture('install_application','Success'),
       get_logs:capture('get_logs',[]), clear_logs:capture('clear_logs',true),
-      check_release:capture('check_release',{version:'2.5.2',notes:'视觉恢复验证'}),
+      check_release:capture('check_release',{version:'2.5.3',notes:'视觉恢复验证'}),
       install_official_adb:capture('install_official_adb','C:\\Android\\adb.exe'),
     }};
   });
@@ -81,7 +81,7 @@ try {
   assert.equal(await page.locator('button.nav-item').count(),6);
   const sidebarColor = await page.locator('.sidebar').evaluate(el=>getComputedStyle(el).backgroundColor);
   assert.equal(sidebarColor,'rgb(255, 255, 255)');
-  assert.equal((await page.locator('.sidebar-profile').innerText()).includes('2.5.2'),true);
+  assert.equal((await page.locator('.sidebar-profile').innerText()).includes('2.5.3'),true);
   console.log('PASS restored original shadcn-style sidebar and four dashboard cards');
 
   await page.locator('.sidebar-toggle').click();
@@ -132,7 +132,7 @@ try {
 
   await page.locator('button.nav-item[title="设置"]').click();
   await page.getByRole('button',{name:/获取官方 ADB/}).waitFor();
-  await page.getByText('Vue 3 · Qt WebEngine',{exact:true}).waitFor();
+  await page.getByText('Vue 3 · WebView2',{exact:true}).waitFor();
   await page.locator('button.nav-item[title="工作台"]').click();
   assert.equal((await page.locator('.page-content h1').textContent()).trim(),'工作台');
   for (const name of ['设备管理','应用管理','部署与更新','运行日志','设置','工作台']) {

@@ -242,6 +242,7 @@ func (a *app) apkRoutes(mux *http.ServeMux) {
 			fail(w, 400, err.Error())
 			return
 		}
+		a.metadata.invalidate()
 		a.apk.progress("安装完成", 0, 0)
 		respond(w, 200, map[string]string{"status": "installed"})
 	})

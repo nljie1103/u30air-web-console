@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shogo82148/androidbinary"
 	"github.com/shogo82148/androidbinary/apk"
 	"golang.org/x/image/webp"
 )
@@ -37,13 +38,13 @@ type metadataStore struct {
 	limit chan struct{}
 }
 
-func (m *metadataStore) get(ctx context.Context, pkg string) appMetadata {
+func (m *metadataStore) get(ctx context.Context, state, pkg string) appMetadata {
 	fallback := appMetadata{Package: pkg, Label: pkg, Checked: time.Now()}
 	if !packageRe.MatchString(pkg) {
 		return fallback
 	}
 	m.mu.Lock()
-	if cached, ok := m.items[pkg]; ok && time.Since(cached.Checked) < appMetadataLifetime {
+	if cached, ok := m.items[pkg]; ok && time.Since(cached.Checked) < metadataLifetime(cached) {
 		m.mu.Unlock()
 		return cached
 	}
@@ -61,17 +62,20 @@ func (m *metadataStore) get(ctx context.Context, pkg string) appMetadata {
 	}
 
 	m.mu.Lock()
-	if cached, ok := m.items[pkg]; ok && time.Since(cached.Checked) < appMetadataLifetime {
+	if cached, ok := m.items[pkg]; ok && time.Since(cached.Checked) < metadataLifetime(cached) {
 		m.mu.Unlock()
 		return cached
 	}
 	m.mu.Unlock()
 
-	path, err := appAPKPath(ctx, pkg, runWith)
+	result, err := nativeAppMetadata(ctx, state, pkg)
 	if err != nil {
-		return fallback
+		path, err := appAPKPath(ctx, pkg, runWith)
+		if err != nil {
+			return fallback
+		}
+		result = parseAPKMetadata(pkg, path)
 	}
-	result := parseAPKMetadata(pkg, path)
 	result.Checked = time.Now()
 	m.mu.Lock()
 	if m.items == nil {
@@ -83,6 +87,19 @@ func (m *metadataStore) get(ctx context.Context, pkg string) appMetadata {
 	m.items[pkg] = result
 	m.mu.Unlock()
 	return result
+}
+
+func metadataLifetime(meta appMetadata) time.Duration {
+	if !meta.HasIcon {
+		return 30 * time.Second
+	}
+	return appMetadataLifetime
+}
+
+func (m *metadataStore) invalidate() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.items = nil
 }
 
 func appAPKPath(ctx context.Context, pkg string, run androidCommand) (string, error) {
@@ -140,6 +157,16 @@ func parseAPKMetadata(pkg, path string) (result appMetadata) {
 	}
 	icon, err := packageFile.Icon(nil)
 	if err != nil || icon == nil {
+		// Ask the resource table for pre-adaptive launcher variants. This
+		// also works when AAPT has renamed every raster file (res/FS.png).
+		for _, density := range []uint16{480, 320, 640, 160} {
+			icon, err = packageFile.Icon(&androidbinary.ResTableConfig{SDKVersion: 25, Density: density})
+			if err == nil && icon != nil {
+				break
+			}
+		}
+	}
+	if icon == nil {
 		// Adaptive icons are often XML backed, with a raster fallback in
 		// another density. Prefer the manifest's actual resource name.
 		iconResource, _ := packageFile.Manifest().App.Icon.WithResTableConfig(nil).String()

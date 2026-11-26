@@ -1,4 +1,4 @@
-name: Windows Qt6 客户端与 Android ARM64 构建发布
+name: Windows WebView2 客户端与 Android ARM64 构建发布
 
 on:
   push:
@@ -27,9 +27,12 @@ jobs:
       - name: PowerShell 5.1 ADB 脚本测试
         shell: powershell
         run: ./installer/tests/windows-adb-tests.ps1
-      - name: 安装原生 Qt6 和 PyInstaller
-        shell: pwsh
-        run: python -m pip install --disable-pip-version-check PySide6==6.11.3 pyinstaller==6.22.3
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: installer/host/go.sum
+      - name: 安装业务后端打包工具
+        run: python -m pip install --disable-pip-version-check pyinstaller==6.22.3
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -48,16 +51,12 @@ jobs:
           node installer/frontend/tests/e2e.mjs
           if ($LASTEXITCODE -ne 0) { throw "Original UI regression tests failed" }
 
-      - name: Qt6 WebEngine + Vue3 真实窗口与 ADB 桥接测试
+      - name: Python ADB 后端与管道协议回归
         shell: pwsh
         run: |
           python -m compileall -q installer
           python -m unittest discover -s installer/tests -p "test_manager_*.py" -v
-          if ($LASTEXITCODE -ne 0) { throw "Qt/Python tests failed" }
-          python installer/app.py --self-test
-          if ($LASTEXITCODE -ne 0) { throw "Qt WebEngine self-test failed" }
-          python installer/app.py --gui-smoke-test
-          if ($LASTEXITCODE -ne 0) { throw "Qt Vue3 window smoke failed" }
+          if ($LASTEXITCODE -ne 0) { throw "Python tests failed" }
 
       - name: Android 8765 网页浏览器交互测试
         shell: pwsh
@@ -66,35 +65,42 @@ jobs:
           node web-console/tests/e2e.mjs
           if ($LASTEXITCODE -ne 0) { throw "Android web UI tests failed" }
 
-      - name: 构建 Qt6 WebEngine + Vue3 Windows 便携版
+      - name: 打包轻量 Windows 客户端
         shell: pwsh
         run: |
-          $common = @("--noconfirm","--clean","--windowed","--name","AndroidWebDesktopManager","--icon","installer/assets/app.ico","--add-data","installer/assets;assets","--add-data","installer/frontend/dist;frontend/dist","installer/app.py")
-          python -m PyInstaller --onedir @common
-          if ($LASTEXITCODE -ne 0) { throw "Portable Qt6 build failed" }
-          $exe = (Resolve-Path "dist/AndroidWebDesktopManager/AndroidWebDesktopManager.exe").Path
-          $p = Start-Process -FilePath $exe -ArgumentList "--self-test" -PassThru -Wait
-          if ($p.ExitCode -ne 0) { throw "Portable EXE self-test failed" }
-          $p = Start-Process -FilePath $exe -ArgumentList "--gui-smoke-test" -PassThru -Wait
-          if ($p.ExitCode -ne 0) { throw "Portable EXE window test failed" }
-          Copy-Item installer/THIRD_PARTY_NOTICES.md dist/AndroidWebDesktopManager/THIRD_PARTY_NOTICES.md
-          Compress-Archive -Path dist/AndroidWebDesktopManager -DestinationPath dist/AndroidWebDesktopManager-Portable.zip -CompressionLevel Optimal -Force
-          if (!(Test-Path "dist/AndroidWebDesktopManager-Portable.zip")) { throw "Portable ZIP missing" }
-      - name: 构建独立 Qt6+Vue3 EXE 与应用图标
-        shell: pwsh
-        run: |
-          $common = @("--noconfirm","--clean","--windowed","--name","AndroidWebDesktopManager","--icon","installer/assets/app.ico","--add-data","installer/assets;assets","--add-data","installer/frontend/dist;frontend/dist","installer/app.py")
-          python -m PyInstaller --onefile @common
-          if ($LASTEXITCODE -ne 0) { throw "Single-file Qt6 build failed" }
+          New-Item -ItemType Directory -Force installer/host/build/frontend,dist | Out-Null
+          Copy-Item installer/frontend/dist/* installer/host/build/frontend -Recurse -Force
+          python -m PyInstaller --noconfirm --clean --onefile --console --name worker --distpath installer/host/build installer/worker.py
+          if ($LASTEXITCODE -ne 0) { throw "Python worker build failed" }
+          $env:CGO_ENABLED = "0"
+          Push-Location installer/host
+          try {
+            go run ./resources
+            if ($LASTEXITCODE -ne 0) { throw "Windows resources failed" }
+            go build -trimpath -tags desktop,production -ldflags "-s -w -H windowsgui" -o ../../dist/AndroidWebDesktopManager.exe .
+            if ($LASTEXITCODE -ne 0) { throw "Wails host build failed" }
+          } finally { Pop-Location }
           $exe = (Resolve-Path "dist/AndroidWebDesktopManager.exe").Path
-          $p = Start-Process -FilePath $exe -ArgumentList "--self-test" -PassThru -Wait
-          if ($p.ExitCode -ne 0) { throw "Single-file EXE self-test failed" }
-          $p = Start-Process -FilePath $exe -ArgumentList "--gui-smoke-test" -PassThru -Wait
-          if ($p.ExitCode -ne 0) { throw "Single-file EXE window test failed" }
-          # QtWebEngine is intentionally embedded: it renders our restored
-          # Vue3 UI without launching Microsoft Edge or a localhost server.
-          if (Test-Path "dist/AndroidWebDesktopManager/_internal/pythonnet") { throw "Unexpected WinForms" }
-          Write-Host "Qt6 WebEngine shell + original Vue3 interface packaged."
+          $size = (Get-Item $exe).Length
+          Write-Host "Standalone size: $size bytes"
+          if ($size -gt 35MB) { throw "Lightweight client exceeded 35 MiB budget" }
+          $env:AWD_SMOKE_LOG = (Join-Path (Get-Location) "dist/smoke.log")
+          foreach ($arg in @("--self-test","--gui-smoke-test")) {
+            $p = Start-Process -FilePath $exe -ArgumentList $arg -PassThru
+            if (!$p.WaitForExit(90000)) { Stop-Process -Id $p.Id -Force; throw "Client test timed out: $arg" }
+            if (Test-Path $env:AWD_SMOKE_LOG) { Get-Content $env:AWD_SMOKE_LOG }
+            if ($p.ExitCode -ne 0) { throw "Client test failed: $arg, exit $($p.ExitCode)" }
+          }
+          New-Item -ItemType Directory -Force dist/AndroidWebDesktopManager | Out-Null
+          Copy-Item $exe dist/AndroidWebDesktopManager/
+          Copy-Item installer/THIRD_PARTY_NOTICES.md dist/AndroidWebDesktopManager/
+          Compress-Archive -Path dist/AndroidWebDesktopManager -DestinationPath dist/AndroidWebDesktopManager-Portable.zip -CompressionLevel Optimal -Force
+          Expand-Archive dist/AndroidWebDesktopManager-Portable.zip dist/portable-test -Force
+          $portable = (Resolve-Path "dist/portable-test/AndroidWebDesktopManager/AndroidWebDesktopManager.exe").Path
+          if ((Get-FileHash $portable).Hash -ne (Get-FileHash $exe).Hash) { throw "Portable executable mismatch" }
+          $p = Start-Process -FilePath $portable -ArgumentList "--self-test" -PassThru
+          if (!$p.WaitForExit(60000)) { Stop-Process -Id $p.Id -Force; throw "Portable launch timed out" }
+          if ($p.ExitCode -ne 0) { throw "Portable launch failed" }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-manager
@@ -132,7 +138,9 @@ jobs:
           test -s dist/windows/AndroidWebDesktopManager-Portable.zip
           test -s installer/assets/app.ico
           test -s installer/assets/app-icon.png
-          test -f installer/qt_window.py
+          test -f installer/host/main.go
+          test -f installer/worker.py
+          ! test -e installer/qt_window.py
           test -f installer/frontend/package.json
           test -f installer/frontend/src/App.vue
           ! test -e installer/edge_host.py
@@ -148,8 +156,25 @@ jobs:
           paths=subprocess.check_output(['git','ls-files'],text=True).splitlines()
           roots={p.split('/')[0] for p in paths}
           assert roots=={'.github','.gitignore','README.md','installer','web-console'},roots
-          print('Project root, QtWebEngine and restored Vue3 sources verified')
+          print('Project root, lightweight WebView2 host and Vue3 sources verified')
           PY
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: 编译 Android 原生图标辅助组件
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="$RUNNER_TEMP/awd-sdk"
+          mkdir -p "$SDK"
+          curl -fLsS --retry 3 --max-time 180 https://dl.google.com/android/repository/platform-35_r02.zip -o "$SDK/platform.zip"
+          curl -fLsS --retry 3 --max-time 180 https://dl.google.com/android/repository/build-tools_r35_linux.zip -o "$SDK/tools.zip"
+          (cd "$SDK" && printf '%s  %s\n' 0988cacad01b38a18a47bac14a0695f246bc76c1b06c0eeb8eb0dc825ab0c8e0 platform.zip bd3a4966912eb8b30ed0d00b0cda6b6543b949d5ffe00bea54c04c81e1561d88 tools.zip | sha256sum -c -)
+          unzip -qo "$SDK/platform.zip" -d "$SDK"
+          unzip -qo "$SDK/tools.zip" -d "$SDK"
+          ANDROID_JAR="$SDK/android-35/android.jar" D8="$SDK/android-15/d8" bash web-console/native-icons/build.sh
+          (cd web-console && go test -tags nativeicons -race ./... && go vet -tags nativeicons ./...)
       - name: 构建 Android ARM64 ZIP
         shell: bash
         run: |
@@ -160,7 +185,7 @@ jobs:
           cp web-console/deploy/* dist/package/installer/
           cp web-console/THIRD_PARTY_NOTICES.md dist/package/THIRD_PARTY_NOTICES.md
           printf '%s\n' "$VERSION" > dist/package/VERSION
-          (cd web-console && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o ../dist/package/desktopd .)
+          (cd web-console && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags nativeicons -trimpath -ldflags "-s -w -X main.version=$VERSION" -o ../dist/package/desktopd .)
           (cd dist/package && zip -q -r ../android-web-desktop-arm64.zip README.md VERSION desktopd THIRD_PARTY_NOTICES.md installer)
           unzip -t dist/android-web-desktop-arm64.zip | tail -1
           sha256sum dist/android-web-desktop-arm64.zip dist/windows/AndroidWebDesktopManager.exe dist/windows/AndroidWebDesktopManager-Portable.zip

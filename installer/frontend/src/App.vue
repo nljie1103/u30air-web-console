@@ -140,7 +140,7 @@ function bridgeMethodsReady(): boolean {
 async function invoke<T = any>(method: string, ...args: any[]): Promise<T> {
   const api = window.pywebview?.api
   const fn = api?.[method]
-  // QtWebChannel registers exposed methods asynchronously.
+  // WebView2 registers exposed methods asynchronously.
   // An absent method is NOT a function to call.
   if (typeof fn !== 'function') {
     throw new Error('Windows 管理接口「' + method + '」尚未就绪，请稍后重试')
@@ -560,12 +560,12 @@ function previewSetup() {
 async function initialize() {
   if (initialized) return
   if (preview) { initialized = true; previewSetup(); return }
-  // The Qt bridge can be published after Vue mounts;
+  // The native bridge can be published after Vue mounts;
   // keep the startup handshake retryable instead of showing a fatal error.
   if (initializing || !bridgeMethodsReady()) return
   initializing = true
   try {
-    // Bound the first async native call so a failed Qt handshake cannot stall.
+    // Bound the first async native call so a failed native handshake cannot stall.
     let handshakeTimer: ReturnType<typeof setTimeout> | undefined
     let result: any
     try {
@@ -1068,10 +1068,10 @@ watch(showSystem, () => {
               </div>
             </section>
             <section class="panel">
-              <div class="panel-head"><div><h2>客户端信息</h2><p>Qt 6 · Vue 3 Windows 管理器</p></div></div>
+              <div class="panel-head"><div><h2>客户端信息</h2><p>Wails · Vue 3 Windows 管理器</p></div></div>
               <div class="detail-grid">
                 <div class="detail-box"><span>当前版本</span><strong>v{{ envVersion }}</strong></div>
-                <div class="detail-box"><span>界面框架</span><strong>Vue 3 · Qt WebEngine</strong></div>
+                <div class="detail-box"><span>界面框架</span><strong>Vue 3 · WebView2</strong></div>
                 <div class="detail-box"><span>设计系统</span><strong>shadcn-vue 风格</strong></div>
               </div>
             </section>

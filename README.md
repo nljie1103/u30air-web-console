@@ -51,7 +51,7 @@
 
 | 环境 | 要求 |
 |:---|:---|
-| Windows 管理器 | Windows 10 / 11 x64，发布包内含 Qt 运行库 |
+| Windows 管理器 | Windows 10 / 11 x64；使用系统 Microsoft WebView2，缺失时可下载安装 |
 | Android 设备端 | ARM64、已授权的 ADB Shell、设备上的私有局域网 IPv4 |
 | 浏览器 | 能访问设备局域网地址的现代浏览器 |
 | 网络 | 初次下载 ADB、在线更新及链接安装 APK 需要互联网 |
@@ -68,7 +68,7 @@
 | 文件 | 用途 |
 |:---|:---|
 | [Windows 便携版 ZIP](https://github.com/nljie1103/u30air-web-console/releases/latest/download/AndroidWebDesktopManager-Portable.zip) | 推荐：完整解压后运行 EXE |
-| [Windows 独立 EXE](https://github.com/nljie1103/u30air-web-console/releases/latest/download/AndroidWebDesktopManager.exe) | 单文件启动，运行时自行解包 |
+| [Windows 独立 EXE](https://github.com/nljie1103/u30air-web-console/releases/latest/download/AndroidWebDesktopManager.exe) | 单文件启动，自动释放内置业务后端 |
 | [Android ARM64 ZIP](https://github.com/nljie1103/u30air-web-console/releases/latest/download/android-web-desktop-arm64.zip) | 设备端服务与命令行部署脚本 |
 
 1. 打开 Windows 管理器；如未发现 ADB，点击「一键安装 ADB」，自动下载 Google 官方工具，无需修改 PATH。
@@ -115,6 +115,8 @@ Windows 中进入「应用管理 → APK 安装器」。网页端先启用「APK
 
 ### 远程桌面
 
+应用名称和图标优先通过 Android PackageManager 获取；系统不支持辅助组件时回退到 APK 资源表解析，仍无法读取时显示字母占位。辅助组件随服务二进制内置，不额外安装应用或申请 Root。
+
 页面提供自动刷新截图、点击、手势、全屏以及返回、主页、最近任务、唤醒和熄屏。独立 noVNC 为可选外部服务，不随本项目安装。
 
 <details>
@@ -143,7 +145,7 @@ Windows 中进入「应用管理 → APK 安装器」。网页端先启用「APK
 
 ```mermaid
 flowchart LR
-    A["Windows 管理器<br/>Qt 6 · Vue 3"] --> B["Python · ADB"]
+    A["Windows 管理器<br/>Wails · Vue 3"] --> B["Python · ADB"]
     B --> C["Android 设备"]
     D["手机 / 电脑浏览器"] --> E["Go HTTP 服务 · 8765"]
     E --> C
@@ -151,13 +153,13 @@ flowchart LR
 
 | 层级 | 技术 | 用途 |
 |:---|:---|:---|
-| Windows 窗口 | Qt 6 / PySide6 / Qt WebEngine | 内嵌前端，不依赖外部浏览器 |
+| Windows 窗口 | Wails 2 / Microsoft WebView2 | 内嵌前端，不依赖外部浏览器 |
 | 桌面界面 | Vue 3 / TypeScript / Lucide | shadcn 风格交互组件 |
-| 桌面后端 | Python / Qt WebChannel / ADB | 设备管理与部署 |
+| 桌面后端 | Python / 私有进程管道 / ADB | 设备管理与部署 |
 | Android 服务 | Go / ARM64 | HTTP 接口、截图、系统调用 |
 | 网页界面 | HTML / CSS / JavaScript | 局域网远程控制 |
 
-Windows 包内含 Chromium 渲染组件，体积大于纯 Qt Widgets。管理界面通过内部资源协议加载，不需要本机 HTTP 服务器。
+Windows 使用系统 WebView2，不再捆绑 Chromium 或 Qt。管理界面直接加载内置资源，无本机 HTTP 服务，也不启动外部 Edge 浏览器。业务后端随 EXE 提供，无需安装 Python。缺少 WebView2 时会提示下载微软官方运行库；运行库由系统单独管理。
 
 ### 项目结构
 
@@ -166,6 +168,8 @@ Windows 包内含 Chromium 渲染组件，体积大于纯 Qt Widgets。管理界
 ├── .github/workflows/       # CI 与 Release
 ├── installer/              # Windows 客户端
 │   ├── frontend/           # Vue 3 界面
+│   ├── host/               # Wails / WebView2 窗口
+│   ├── worker.py           # 私有进程管道后端
 │   ├── assets/             # 应用图标
 │   ├── apk.py              # APK 下载与安装
 │   ├── bridge.py           # 业务接口
@@ -174,6 +178,7 @@ Windows 包内含 Chromium 渲染组件，体积大于纯 Qt Widgets。管理界
 │   ├── web/                # 控制台界面
 │   ├── deploy/             # 安装脚本
 │   ├── apk.go              # 设备端 APK 安装
+│   ├── native-icons/       # Android 图标渲染辅助组件
 │   └── version.json        # 发布版本及说明
 ├── .gitignore
 └── README.md
@@ -201,15 +206,20 @@ Windows 包内含 Chromium 渲染组件，体积大于纯 Qt Widgets。管理界
 <details>
 <summary><strong>Windows 客户端</strong></summary>
 
-需要 Windows、Node.js 22 和 Python 3.12。使用 PowerShell：
+需要 Windows、Go 1.26、Node.js 22 和 Python 3.12。使用 PowerShell：
 
 ```powershell
 npm ci --prefix installer/frontend
 npm run build --prefix installer/frontend
-python -m pip install PySide6==6.11.3 pyinstaller==6.22.3
+python -m pip install pyinstaller==6.22.3
 python -m unittest discover -s installer/tests -p "test_manager_*.py"
-python installer/app.py --self-test
-python -m PyInstaller --onedir --windowed --name AndroidWebDesktopManager --icon installer/assets/app.ico --add-data "installer/assets;assets" --add-data "installer/frontend/dist;frontend/dist" installer/app.py
+New-Item -ItemType Directory -Force installer/host/build/frontend
+Copy-Item installer/frontend/dist/* installer/host/build/frontend -Recurse -Force
+python -m PyInstaller --onefile --console --name worker --distpath installer/host/build installer/worker.py
+Set-Location installer/host
+go run ./resources
+$env:CGO_ENABLED = "0"
+go build -trimpath -tags desktop,production -ldflags "-s -w -H windowsgui" -o AndroidWebDesktopManager.exe .
 ```
 
 </details>
@@ -222,12 +232,16 @@ python -m PyInstaller --onedir --windowed --name AndroidWebDesktopManager --icon
 ```bash
 cd web-console
 go test ./...
+# Go-only build (static APK icon fallback)
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o desktopd .
+# Official build: compile the tiny DEX helper with Android SDK first.
+ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar" D8="$ANDROID_HOME/build-tools/35.0.0/d8" bash native-icons/build.sh
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags nativeicons -trimpath -o desktopd .
 ```
 
 </details>
 
-正式版本由 GitHub Actions 构建，并执行前端交互、Qt 窗口、ADB、Go 并发及版本一致性测试。查看 [构建记录](https://github.com/nljie1103/u30air-web-console/actions) 与 [更新记录](https://github.com/nljie1103/u30air-web-console/releases)。
+正式版本由 GitHub Actions 构建，并执行前端交互、WebView2 窗口、ADB、Go 并发及版本一致性测试。查看 [构建记录](https://github.com/nljie1103/u30air-web-console/actions) 与 [更新记录](https://github.com/nljie1103/u30air-web-console/releases)。
 
 ---
 

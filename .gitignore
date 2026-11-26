@@ -12,3 +12,6 @@ web-console/tests/node_modules/
 # Windows Vue 3 production bundle and local npm dependencies
 installer/frontend/node_modules/
 installer/frontend/dist/
+
+# Generated Windows resource object
+installer/host/*.syso

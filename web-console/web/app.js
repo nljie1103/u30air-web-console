@@ -103,7 +103,7 @@ if(login){
     const response=await fetch('/api/apk/install',{method:'POST',headers:{'Content-Type':'application/vnd.android.package-archive','X-Desktop-Action':'1'},body:source});
     const result=await response.json();if(!response.ok)throw Error(result.error||'安装失败');
    }else await api('/api/apk/install','POST',{url:source});
-   progress.textContent='安装完成';toast('APK 安装成功');await loadApps();
+   progress.textContent='安装完成';toast('APK 安装成功');appDetails.clear();await loadApps();
   }catch(e){progress.textContent=e.message;toast(e.message)}
   finally{clearInterval(poll);apkBusy=false;apkToggle.disabled=false;buttons.forEach(b=>b.disabled=false)}
  }
@@ -259,7 +259,7 @@ if(login){
    if(meta?.hasIcon){
     const img=document.createElement('img');
     img.className='app-icon';img.alt='';img.loading='lazy';
-    img.src='/api/app-icon?package='+encodeURIComponent(pkg);
+    img.src='/api/app-icon?package='+encodeURIComponent(pkg)+'&v='+detailsGeneration;
     img.onerror=()=>{img.remove();icon.textContent=label.slice(0,1).toUpperCase();};
     icon.replaceChildren(img);
    }
@@ -303,6 +303,7 @@ if(login){
   try{
    const r=await api('/api/apps');
    apps=(r.packages||[]).filter(pkg=>typeof pkg==='string');
+   for(const pkg of appDetails.keys())if(!apps.includes(pkg)||!appDetails.get(pkg)?.hasIcon)appDetails.delete(pkg);
    renderApps();void enrichApps(apps);
   }catch(err){
    byId('appList').textContent='应用列表不可用：'+err.message;

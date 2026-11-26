@@ -1,5 +1,5 @@
 {
-  "version": "2.5.2",
-  "title": "双端 APK 安装器与界面、发布流程优化",
-  "notes": "- Windows 应用管理新增 APK 直链下载与本地文件安装，使用电脑网络和 ADB。\n- 8765 新增设备直链下载、浏览器上传 APK 与独立安装开关，显示传输进度、安装结果；仅支持 128 MiB 内单文件 APK。\n- 统一 Windows 与网页端品牌图标，修正 Qt WebEngine 框架标注、表单样式和无功能装饰。\n- 修复应用状态、登录错误提示、设备切换状态和资源统计边界问题；清理历史发布修复逻辑。\n- 按 Jiuliu README Style 优化文档，增加双端安装测试。"
+  "version": "2.5.3",
+  "title": "Windows 轻量化与 Android 应用图标增强",
+  "notes": "- Windows 客户端迁移至 Wails 2 + 系统 WebView2，保留原版 Vue 3/shadcn 风格和既有 Python/ADB 业务功能，不再打包 Qt WebEngine 或启动本机 HTTP 服务。\n- 无 WebView2 时提供官方下载安装提示；保留 ADB 一键安装和全部部署、认证、APK 安装功能。\n- 设备端内置 DEX 图标辅助组件，尝试通过 Android PackageManager 渲染图标；固件不兼容时自动回退到 APK 资源表和位图解析。\n- 补充旧版位图变体解析（包括资源名混淆的 v2rayNG APK），缩短失败图标缓存时间，安装后刷新应用元数据。\n- 更新构建、README 和第三方说明；保持单版本单提交。"
 }
