@@ -40,3 +40,16 @@ h1{font-size:19px;font-weight:680;letter-spacing:-.4px;margin:0 0 3px}h2{font-si
  .power-actions button{flex:1}
  .desktop-col:fullscreen{padding:9px}
 }
+
+
+.metric-row{margin:14px 0}.metric-row>div:first-child{display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:11px;margin-bottom:7px;color:#788596}
+.metric-row strong{color:#374258;font-size:12px;font-weight:650}
+.metric-track{height:7px;border-radius:7px;background:#edf1f6;overflow:hidden}
+.metric-track span{height:100%;width:0;display:block;border-radius:7px;background:linear-gradient(90deg,#318bba,#31b9a6);transition:width .35s}
+.metric-uptime{color:#79869a!important;margin:9px 0 0!important}
+.auth-toggle{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:650;margin:12px 0;color:#32405b}
+.auth-toggle input{width:17px!important;height:17px;accent-color:#2f7259}
+.auth-caption{display:block;font-size:11px;color:#8592a3;margin:10px 0 7px}
+.auth-warning{padding:9px 10px;border-radius:8px;background:#fff6ed;color:#aa6326!important;font-size:11px!important}
+#authSave{margin:8px 0 0;padding:9px 12px;border:1px solid #dee4eb;border-radius:8px;background:#f7f9fb;color:#374558;cursor:pointer}
+#authSave:hover{background:#edf2f7}

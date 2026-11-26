@@ -16,13 +16,14 @@ from typing import Any
 import webbrowser
 
 from adb_client import ADB, ADBError, locate_adb, validate_lan_endpoint, PKG_RE
+from version import APP_VERSION
 from deployment import (
     download_release,
     fetch_release,
     install_on_device,
     parse_package,
     uninstall_from_device,
-    official_adb_download,
+    official_adb_download, read_device_auth, configure_device_auth,
 )
 
 
@@ -37,7 +38,7 @@ class DesktopBridge:
         self.settings = self._load_settings()
         saved = self.settings.get("adb_path", "")
         self.adb_path = Path(saved) if saved and Path(saved).is_file() else locate_adb()
-        self.version = "2.4.4"
+        self.version = APP_VERSION
 
     def _load_settings(self) -> dict:
         try:
@@ -144,34 +145,6 @@ class DesktopBridge:
         self.log("已设置 ADB 路径：" + str(p))
         return str(p)
 
-    def choose_adb(self) -> str:
-        path = self._choose_file("adb.exe" if os.name == "nt" else "adb")
-        return self.set_adb_path(path) if path else ""
-
-    def choose_local_zip(self) -> str:
-        return self._choose_file("*.zip") or ""
-
-    def _choose_file(self, pattern: str) -> str | None:
-        """Windows native file chooser independent of the Edge app's UI thread."""
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        try:
-            root.withdraw()
-            root.attributes("-topmost", True)
-            if pattern == "*.zip":
-                filters = [("ZIP 安装包", "*.zip"), ("所有文件", "*.*")]
-            elif pattern.lower() == "adb.exe":
-                filters = [("ADB 可执行文件", "adb.exe"), ("可执行文件", "*.exe")]
-            else:
-                filters = [("所有文件", "*.*")]
-            choice = filedialog.askopenfilename(
-                parent=root, title="请选择文件", filetypes=filters
-            )
-            return choice or None
-        finally:
-            root.destroy()
-
     def install_official_adb(self) -> str:
         def operation():
             path = official_adb_download(lambda msg: self.log(msg))
@@ -189,7 +162,8 @@ class DesktopBridge:
         # App URLs must refer to a local device address, not an arbitrary URL.
         return validate_lan_endpoint(ip + ":5555").split(":")[0]
 
-    def install_latest(self, serial: str, ip: str) -> dict:
+    def install_latest(self, serial: str, ip: str, auth_enabled: bool | None = None,
+                       auth_password: str = "") -> dict:
         def operation():
             adb = self._ready(serial)
             release = fetch_release()
@@ -200,12 +174,14 @@ class DesktopBridge:
             url, password = install_on_device(
                 adb, serial, package, self._validate_ip(ip),
                 progress=lambda msg: self.log(msg),
+                auth_enabled=auth_enabled, auth_password=auth_password,
             )
             self._remember_device_ip(serial, self._validate_ip(ip))
-            return {"url": url, "password": password, "version": package.version}
+            return {"url": url, "password": password, "version": package.version, "auth_kept": auth_enabled is None}
         return self._execute("安装最新版 · " + serial, operation)
 
-    def install_local(self, serial: str, ip: str, file_path: str) -> dict:
+    def install_local(self, serial: str, ip: str, file_path: str,
+                      auth_enabled: bool | None = None, auth_password: str = "") -> dict:
         def operation():
             adb = self._ready(serial)
             p = Path(file_path)
@@ -215,10 +191,23 @@ class DesktopBridge:
             url, password = install_on_device(
                 adb, serial, package, self._validate_ip(ip),
                 progress=lambda msg: self.log(msg),
+                auth_enabled=auth_enabled, auth_password=auth_password,
             )
             self._remember_device_ip(serial, self._validate_ip(ip))
-            return {"url": url, "password": password, "version": package.version}
+            return {"url": url, "password": password, "version": package.version, "auth_kept": auth_enabled is None}
         return self._execute("安装本地版本 · " + serial, operation)
+
+    def read_auth(self, serial: str) -> dict:
+        return read_device_auth(self._ready(serial), serial)
+
+    def configure_auth(self, serial: str, enabled: bool, password: str = "") -> dict:
+        return self._execute(
+            "更新网页访问密码 · " + serial,
+            lambda: configure_device_auth(
+                self._ready(serial), serial, enabled, password,
+                progress=lambda msg: self.log(msg),
+            ),
+        )
 
     def uninstall(self, serial: str) -> str:
         return self._execute("卸载网页桌面 · " + serial,

@@ -7,5 +7,8 @@ __pycache__/
 build/
 *.spec
 
+web-console/tests/node_modules/
+
+# Legacy Windows Vue build output (no longer part of source)
 installer/frontend/node_modules/
 installer/frontend/dist/

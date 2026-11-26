@@ -182,6 +182,62 @@ class TestDeployment(unittest.TestCase):
         self.assertIn("卸载", response)
         self.assertEqual(fake.commands[-1][-2:], ("-rf", adb_client.DATA_DIR))
 
+    def test_first_install_passwordless_or_one_char_password(self):
+        package = deployment.parse_package(package_zip())
+        class CapturingADB(FakeADB):
+            uploaded_config = None
+            def selected(self, serial, *args, timeout=20):
+                if args[0] == "push" and str(args[2]).endswith("auth.json.next"):
+                    self.uploaded_config = json.loads(Path(args[1]).read_text(encoding="utf-8"))
+                return super().selected(serial, *args, timeout=timeout)
+
+        for enabled, password in [(False, ""), (True, "1"), (True, "中文")]:
+            with self.subTest(enabled=enabled, password=password):
+                adb = CapturingADB()
+                with patch.object(deployment, "verify_remote_service"):
+                    url, result_password = deployment.install_on_device(
+                        adb, "usb-1", package, "192.168.0.1",
+                        auth_enabled=enabled, auth_password=password,
+                    )
+                self.assertEqual(url,"http://192.168.0.1:8765")
+                self.assertEqual(result_password,password if enabled else "")
+                self.assertEqual(adb.uploaded_config,
+                                 {"enabled":enabled,"password":password if enabled else ""})
+                self.assertTrue(any(c[2:5] == ("mv", "-f", adb_client.DATA_DIR + "/auth.json.next")
+                                    for c in adb.commands if c[0]=="shell"))
+
+        with self.assertRaisesRegex(ValueError,"密码"):
+            deployment.install_on_device(
+                FakeADB(),"usb-1",package,"192.168.0.1",
+                auth_enabled=True,auth_password=""
+            )
+
+    def test_configure_web_login_keeps_running_port(self):
+        class AuthorizedADB(FakeADB):
+            config = {"enabled":False,"password":""}
+            stored = None
+            def shell(self,serial,*args,timeout=20):
+                if args==("cat",adb_client.DATA_DIR+"/auth.json"):
+                    return json.dumps(self.config)
+                if args==("cat","/proc/0123456789abcdef0123456789abcdef/cmdline"):
+                    return (adb_client.DATA_DIR+"/current\x00-listen\x00"
+                            "192.168.0.1:8765\x00")
+                return super().shell(serial,*args,timeout=timeout)
+            def selected(self,serial,*args,timeout=20):
+                if args[0]=="push" and str(args[2]).endswith("auth.json.edit"):
+                    self.stored=json.loads(Path(args[1]).read_text(encoding="utf-8"))
+                return super().selected(serial,*args,timeout=timeout)
+        adb=AuthorizedADB()
+        with patch.object(deployment,"verify_remote_service") as health:
+            result=deployment.configure_device_auth(adb,"usb-1",True,"a")
+        self.assertTrue(result["enabled"])
+        self.assertEqual(adb.stored,{"enabled":True,"password":"a"})
+        self.assertTrue(any(c[2:5]==("sh",adb_client.DATA_DIR+"/start.sh","192.168.0.1:8765")
+                            for c in adb.commands if c[0]=="shell"))
+        health.assert_called_once()
+        with self.assertRaisesRegex(ValueError,"密码"):
+            deployment.configure_device_auth(adb,"usb-1",True,"")
+
     def test_same_version_reinstall_uses_staging_and_backup(self):
         fake = FakeADB()
         fake.version = "releases/2.1.0/desktopd"

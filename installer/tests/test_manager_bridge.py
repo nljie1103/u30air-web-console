@@ -1,4 +1,4 @@
-"""Focused safety and integration tests for the Vue/WebView2 bridge."""
+"""Focused safety and integration tests for the Qt6 desktop bridge."""
 import os
 from pathlib import Path
 import sys
@@ -22,7 +22,7 @@ class TestDesktopBridge(unittest.TestCase):
 
     def test_version_and_config(self):
         env = self.bridge.environment()
-        self.assertEqual(env["version"], "2.4.4")
+        self.assertEqual(env["version"], "2.5.0")
         self.assertIn("adb_found", env)
         self.assertTrue(Path(self.bridge.settings_file).parent.is_dir())
 

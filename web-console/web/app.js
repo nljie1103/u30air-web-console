@@ -36,6 +36,69 @@ if(login){
   renderQueued=true;
   setTimeout(()=>{renderQueued=false;renderApps()},180);
  }
+ const formatSize=value=>typeof value==='number'&&value>=0
+   ?(value/1073741824).toFixed(value>=1073741824?1:2)+' GB':'—';
+ function setMeter(id,value){
+  const bar=byId(id);
+  bar.style.width=Number.isFinite(value)?Math.max(0,Math.min(100,value)).toFixed(1)+'%':'0%';
+ }
+ async function refreshMetrics(){
+  try{
+   const r=await api('/api/metrics');
+   const cpu=typeof r.cpuPercent==='number'?r.cpuPercent:null;
+   byId('cpuText').textContent=cpu===null?'不可用':cpu.toFixed(1)+'% · '+(r.cpuCores||'—')+' 核';
+   setMeter('cpuFill',cpu);
+   for(const [prefix,totalKey,usedKey,labelId] of [
+    ['ram','memoryTotal','memoryUsed','ramText'],
+    ['storage','storageTotal','storageUsed','storageText']
+   ]){
+    const total=r[totalKey],used=r[usedKey];
+    const percent=typeof total==='number'&&total>0&&typeof used==='number'?used/total*100:null;
+    byId(labelId).textContent=percent===null?'不可用':
+      formatSize(used)+' / '+formatSize(total)+' · '+percent.toFixed(1)+'%';
+    setMeter(prefix==='ram'?'ramFill':'storageFill',percent);
+   }
+   const uptime=typeof r.uptimeSeconds==='number'?r.uptimeSeconds:null;
+   const hours=uptime===null?0:Math.floor(uptime/3600);
+   byId('uptimeText').textContent=uptime===null?'运行时间：不可用':
+      '运行时间：'+Math.floor(hours/24)+' 天 '+hours%24+' 小时';
+   byId('metricsNote').textContent='实时';
+  }catch(err){byId('metricsNote').textContent='读取失败'}
+ }
+ let passwordWasEnabled=false;
+ const authToggle=byId('authToggle'),authPassword=byId('authPassword');
+ const syncAuthVisibility=()=>{
+  byId('authPasswordGroup').hidden=!authToggle.checked;
+  byId('authWarning').hidden=authToggle.checked;
+  byId('authHint').textContent=passwordWasEnabled
+    ?'已有密码时，留空表示保持原密码'
+    :'请输入要使用的密码（例如单个数字也可以）';
+ };
+ async function refreshAuth(){
+  try{
+   const config=await api('/api/auth/config');
+   passwordWasEnabled=Boolean(config.enabled);
+   authToggle.checked=passwordWasEnabled;
+   byId('authMode').textContent=passwordWasEnabled?'已启用':'无需登录';
+   byId('logout').hidden=!passwordWasEnabled;
+   syncAuthVisibility();
+  }catch(err){byId('authMode').textContent='读取失败'}
+ }
+ authToggle.addEventListener('change',syncAuthVisibility);
+ byId('authSave').addEventListener('click',async()=>{
+  const enabled=authToggle.checked,password=authPassword.value;
+  if(enabled&&!password&&!passwordWasEnabled){
+   toast('开启登录时请填写一个密码，任意长度均可');
+   return;
+  }
+  if(!enabled&&!window.confirm('关闭密码后，同一个局域网的设备都可以访问并控制本设备。确认关闭吗？'))return;
+  const button=byId('authSave');button.disabled=true;
+  try{
+   await api('/api/auth/config','POST',{enabled,password});
+   toast('登录设置已保存，正在重新进入控制台…');
+   setTimeout(()=>location.replace('/'),600);
+  }catch(err){toast(err.message);button.disabled=false}
+ });
  const say=(msg)=>{byId('frameStatus').textContent=msg};
  async function status(){
   try{
@@ -250,7 +313,7 @@ if(login){
   try{await api('/api/update/apply','POST');toast('更新已准备就绪，服务即将重启');setTimeout(()=>location.reload(),14000);}
   catch(err){toast(err.message);button.disabled=false;}
  });
- status();loadApps();capture();void probeVnc();
- setInterval(capture,1500);setInterval(status,12000);
+ status();loadApps();capture();void probeVnc();void refreshAuth();void refreshMetrics();
+ setInterval(capture,1500);setInterval(status,12000);setInterval(refreshMetrics,5000);
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)capture()});
 }

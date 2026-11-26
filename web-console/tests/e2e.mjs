@@ -5,7 +5,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../web-console/web');
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../web');
 const browserPaths = [
   process.env.AWD_BROWSER_PATH,
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -37,7 +37,22 @@ const server = createServer(async (req, res) => {
   if (path.pathname === '/assets/app.css') return respond(200, readFileSync(join(root, 'app.css')), 'text/css');
   if (path.pathname === '/assets/app.js') return respond(200, readFileSync(join(root, 'app.js')), 'text/javascript');
   if (path.pathname === '/') return respond(200, readFileSync(join(root, 'index.html')), 'text/html');
-  if (path.pathname === '/api/status') return respond(200, { version: '2.4.1', manufacturer: 'ZTE', model: 'U30 Air', android: '13', abi: 'arm64-v8a' });
+  if (path.pathname === '/api/status') return respond(200, { version: '2.5.0', manufacturer: 'ZTE', model: 'U30 Air', android: '13', abi: 'arm64-v8a' });
+  if (path.pathname === '/api/metrics') return respond(200, {
+    cpuPercent: 28.5, cpuCores: 8,
+    memoryTotal: 4294967296, memoryUsed: 2147483648,
+    storageTotal: 17179869184, storageUsed: 4294967296,
+    uptimeSeconds: 176400,
+  });
+  if (path.pathname === '/api/auth/config' && req.method === 'GET')
+    return respond(200, { enabled: false });
+  if (path.pathname === '/api/auth/config' && req.method === 'POST') {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const config = JSON.parse(body);
+    calls.push({ action: 'set-auth', ...config });
+    return respond(200, { enabled: config.enabled, status: 'saved' });
+  }
   if (path.pathname === '/api/apps') return respond(200, { packages });
   if (path.pathname === '/api/app-info') {
     const pkg = path.searchParams.get('package');
@@ -129,6 +144,17 @@ try {
   await page.waitForFunction(() => document.querySelector('#toast')?.textContent?.includes('已发送重启'));
   assert(calls.some(c => c.action === 'reboot' && c.confirm === '重启'));
   console.log('PASS power controls require explicit Chinese confirmation text');
+
+  await page.getByText('28.5% · 8 核', { exact: true }).waitFor();
+  assert((await page.locator('#ramText').textContent()).includes('2.0 GB'));
+  assert((await page.locator('#storageText').textContent()).includes('4.0 GB'));
+  await page.locator('#authMode').getByText('无需登录').waitFor();
+  await page.locator('#authToggle').check();
+  await page.locator('#authPassword').fill('1');
+  await page.locator('#authSave').click();
+  await page.waitForFunction(() => document.querySelector('#toast')?.textContent?.includes('登录设置已保存'));
+  assert(calls.some(c => c.action === 'set-auth' && c.enabled === true && c.password === '1'));
+  console.log('PASS live CPU/RAM/storage telemetry and one-character password setting');
 
   assert.deepEqual(exceptions, [], 'Frontend script must stay error-free');
   console.log('ANDROID_WEB_APPS_E2E_OK');

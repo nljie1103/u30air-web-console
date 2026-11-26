@@ -5,7 +5,6 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -26,7 +25,7 @@ import (
 	"time"
 )
 
-var version = "2.0.0"
+var version = "dev"
 
 const repo = "nljie1103/u30air-web-console"
 const assetName = "android-web-desktop-arm64.zip"
@@ -43,6 +42,7 @@ type app struct {
 	updater    sync.Mutex
 	updating   bool
 	metadata   metadataStore
+	auth       authState
 }
 
 func randomBytes(n int) []byte {
@@ -59,9 +59,11 @@ func passwordAt(state string) string {
 	path := filepath.Join(state, "password.txt")
 	b, err := os.ReadFile(path)
 	if err == nil {
-		p := strings.TrimSpace(string(b))
-		if len(p) < 24 {
-			log.Fatal("invalid password file")
+		// No password length/complexity rule: simple user-selected passwords
+		// are allowed, including one-character passwords.
+		p := strings.TrimSuffix(string(b), "\n")
+		if p == "" {
+			log.Fatal("password file is empty")
 		}
 		return p
 	}
@@ -88,7 +90,13 @@ func passwordAt(state string) string {
 	return p
 }
 func (a *app) mac(s string) []byte {
-	h := hmac.New(sha256.New, a.secret)
+	a.auth.mu.RLock()
+	secret := a.auth.secret
+	if len(secret) == 0 {
+		secret = a.secret
+	}
+	h := hmac.New(sha256.New, secret)
+	a.auth.mu.RUnlock()
 	_, _ = h.Write([]byte(s))
 	return h.Sum(nil)
 }
@@ -97,6 +105,9 @@ func (a *app) cookieValue() string {
 	return v + "." + base64.RawURLEncoding.EncodeToString(a.mac(v))
 }
 func (a *app) authed(r *http.Request) bool {
+	if !a.authEnabled() {
+		return true
+	}
 	c, e := r.Cookie("awd-session")
 	if e != nil {
 		return false
@@ -198,7 +209,7 @@ func (a *app) handler() http.Handler {
 			fail(w, 400, "invalid json")
 			return
 		}
-		if len(in.Password) != len(a.password) || subtle.ConstantTimeCompare([]byte(in.Password), []byte(a.password)) != 1 {
+		if a.authEnabled() && !a.checkPassword(in.Password) {
 			time.Sleep(350 * time.Millisecond)
 			fail(w, 401, "管理口令不正确")
 			return
@@ -213,6 +224,37 @@ func (a *app) handler() http.Handler {
 		}
 		http.SetCookie(w, &http.Cookie{Name: "awd-session", Value: "", HttpOnly: true, SameSite: http.SameSiteStrictMode, Path: "/", MaxAge: -1})
 		respond(w, 200, map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("/api/auth/config", func(w http.ResponseWriter, r *http.Request) {
+		if !a.authed(r) {
+			fail(w, 401, "login required")
+			return
+		}
+		switch r.Method {
+		case "GET":
+			respond(w, 200, map[string]any{"enabled": a.authEnabled()})
+		case "POST":
+			if !a.validMutation(r) {
+				fail(w, 403, "forbidden")
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+			var data struct {
+				Enabled  bool
+				Password string
+			}
+			if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+				fail(w, 400, "密码设置格式不正确")
+				return
+			}
+			if err := a.setAuthConfig(data.Enabled, data.Password); err != nil {
+				fail(w, 400, err.Error())
+				return
+			}
+			respond(w, 200, map[string]any{"enabled": data.Enabled, "status": "saved"})
+		default:
+			fail(w, 405, "method not allowed")
+		}
 	})
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		if !a.authed(r) {
@@ -230,6 +272,19 @@ func (a *app) handler() http.Handler {
 			"android":      prop(r.Context(), "ro.build.version.release"),
 			"abi":          prop(r.Context(), "ro.product.cpu.abi"),
 		})
+	})
+	mux.HandleFunc("/api/metrics", func(w http.ResponseWriter, r *http.Request) {
+		if !a.authed(r) {
+			fail(w, 401, "login required")
+			return
+		}
+		if r.Method != "GET" {
+			fail(w, 405, "method not allowed")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		respond(w, 200, measureDevice(ctx))
 	})
 	mux.HandleFunc("/api/apps", func(w http.ResponseWriter, r *http.Request) {
 		if !a.authed(r) {
@@ -499,7 +554,15 @@ func main() {
 	if err != nil {
 		log.Fatal("GitHub HTTPS 信任配置错误：", err)
 	}
-	a := &app{addr: *addr, state: *state, password: passwordAt(*state), secret: randomBytes(32), httpClient: githubClient}
+	legacyPassword := passwordAt(*state)
+	authCfg, err := loadAuthConfig(*state, legacyPassword)
+	if err != nil {
+		log.Fatal("设备登录配置无效：", err)
+	}
+	a := &app{addr: *addr, state: *state, password: legacyPassword, secret: randomBytes(32), httpClient: githubClient}
+	a.auth.password = authCfg.Password
+	a.auth.disabled = !authCfg.Enabled
+	a.auth.secret = randomBytes(32)
 	_ = os.WriteFile(filepath.Join(*state, "server.pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0600)
 	var serverReady atomic.Bool
 	if err := startLocalHealth(*state, &serverReady); err != nil {

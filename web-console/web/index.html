@@ -39,7 +39,27 @@
   </section>
   <aside class="sidebar">
    <section class="panel"><div class="panel-head"><h2>应用</h2><span class="small-muted" id="appCount">—</span></div><p>选择设备上已安装的应用，即可直接打开。</p><input id="searchApps" type="search" placeholder="搜索应用名称或包名" aria-label="搜索应用"><div class="apps" id="appList"><div class="muted">加载应用列表中…</div></div></section>
+   <section class="panel" id="metricsPanel">
+    <div class="panel-head"><h2>设备状态</h2><span id="metricsNote" class="small-muted">正在读取</span></div>
+    <p>读取 Android 系统当前资源使用情况，每 5 秒更新。</p>
+    <div class="metric-row"><div><strong>CPU</strong><span id="cpuText">—</span></div><div class="metric-track"><span id="cpuFill"></span></div></div>
+    <div class="metric-row"><div><strong>运行内存</strong><span id="ramText">—</span></div><div class="metric-track"><span id="ramFill"></span></div></div>
+    <div class="metric-row"><div><strong>设备存储 /data</strong><span id="storageText">—</span></div><div class="metric-track"><span id="storageFill"></span></div></div>
+    <p id="uptimeText" class="metric-uptime">运行时间：—</p>
+   </section>
    <section class="panel"><div class="panel-head"><h2>设备信息</h2></div><div class="info-line"><span>Android</span><b id="androidVersion">—</b></div><div class="info-line"><span>架构</span><b id="architecture">—</b></div><div class="info-line"><span>访问地址</span><b id="hostName">—</b></div></section>
+   <section class="panel" id="authPanel">
+    <div class="panel-head"><h2>访问密码</h2><span id="authMode" class="small-muted">正在读取</span></div>
+    <p>自行选择是否开启登录。关闭后同一局域网的设备可直接使用控制台。</p>
+    <label class="auth-toggle"><input type="checkbox" id="authToggle"> 开启网页密码验证</label>
+    <div id="authPasswordGroup" hidden>
+      <label class="auth-caption" for="authPassword">设置新密码（可使用任意简单密码）</label>
+      <input id="authPassword" type="password" autocomplete="new-password" placeholder="无需大小写、数字或特殊符号要求">
+      <div class="auth-caption" id="authHint">已有密码时，留空表示保持原密码</div>
+    </div>
+    <p id="authWarning" class="auth-warning">关闭后，能连接此局域网管理地址的人都可以控制设备。</p>
+    <button id="authSave" class="light" type="button">保存登录设置</button>
+   </section>
    <section class="panel"><div class="panel-head"><h2>检查更新</h2><span class="small-muted" id="updatePill">未检查</span></div><p>手动检查 GitHub 版本。安装前可阅读更新内容。</p><div class="panel-actions"><button class="light" id="checkUpdate">检查更新</button><button class="primary" id="applyUpdate" disabled>安装更新</button></div><div id="releaseNote" class="release-note" hidden></div></section>
    <section class="panel">
     <div class="panel-head"><h2>独立 noVNC</h2><span class="tiny-tag">可选组件</span></div>
