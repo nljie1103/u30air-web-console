@@ -1,22 +1,65 @@
-"""Windows desktop entry: Vue 3 over local HTTP + WebView2 + controlled ADB bridge."""
+"""Windows launcher for the Vue 3 desktop interface.
+
+The browser chrome is owned by Microsoft Edge (native app window), not the
+pywebview/pythonnet WinForms host. Interactive dragging therefore does not
+enter a Python/.NET managed window message loop.
+"""
 from __future__ import annotations
 
 import argparse
+import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
-import threading
+import tempfile
 import time
 from urllib.request import urlopen
 
 from bridge import DesktopBridge
+from edge_host import start_edge_server
 from local_server import start_frontend_server
 
-APP_VERSION = "2.3.2"
+APP_VERSION = "2.4.0"
 
 
 def frontend_file() -> Path:
     root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
     return root / "installer" / "frontend" / "dist" / "index.html"
+
+
+def edge_executable() -> Path:
+    """Locate real Microsoft Edge rather than a general file-association URI."""
+    candidates: list[Path] = []
+    if os.environ.get("AWD_EDGE_EXE"):
+        candidates.append(Path(os.environ["AWD_EDGE_EXE"]))
+    for env in ("ProgramFiles(x86)", "PROGRAMFILES", "ProgramFiles", "LOCALAPPDATA"):
+        home = os.environ.get(env)
+        if home:
+            candidates.append(Path(home) / "Microsoft" / "Edge" / "Application" / "msedge.exe")
+    if os.name == "nt":
+        try:
+            import winreg
+            for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                try:
+                    with winreg.OpenKey(root, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe") as key:
+                        value = winreg.QueryValueEx(key, "")[0]
+                    candidates.append(Path(value))
+                except OSError:
+                    pass
+        except ImportError:
+            pass
+    found = shutil.which("msedge")
+    if found:
+        candidates.append(Path(found))
+    for candidate in candidates:
+        if candidate.is_file() and candidate.name.lower() == "msedge.exe":
+            return candidate.resolve()
+    raise FileNotFoundError(
+        "没有检测到 Microsoft Edge 浏览器。请安装或修复 Edge 后重试。"
+        "Windows WebView2 Runtime 并不等于完整的 Edge 浏览器。"
+    )
 
 
 def self_test(frontend_dir: Path) -> None:
@@ -37,7 +80,7 @@ def self_test(frontend_dir: Path) -> None:
                 self.assets: list[str] = []
             def handle_starttag(self, tag, attrs):
                 for key, value in attrs:
-                    if value and (key in ("src", "href")) and "assets/" in value:
+                    if value and key in ("src", "href") and "assets/" in value:
                         self.assets.append(value.lstrip("./"))
 
         finder = ScriptFinder()
@@ -49,10 +92,102 @@ def self_test(frontend_dir: Path) -> None:
             with urlopen(base + asset, timeout=3) as response:
                 if response.status != 200 or len(response.read(2_000_000)) < 8:
                     raise RuntimeError("Failed to serve Vue asset: " + asset)
-        print(f"Android Web Desktop Manager v{APP_VERSION}: Vue local HTTP and Python bridge OK")
+        print(f"Android Web Desktop Manager v{APP_VERSION}: Vue assets and Python bridge OK")
     finally:
         server.shutdown()
         server.server_close()
+
+
+def _move_browser_window(edge_pid: int) -> None:
+    """Windows smoke: reposition a real Edge app window and verify it survived."""
+    if os.name != "nt":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumWindows.argtypes = (callback, wintypes.LPARAM)
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = (wintypes.HWND,)
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.GetWindowTextLengthW.argtypes = (wintypes.HWND,)
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetWindowRect.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.RECT))
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = (
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, wintypes.UINT,
+    )
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.IsWindow.argtypes = (wintypes.HWND,)
+    user32.IsWindow.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.SetCursorPos.argtypes = (ctypes.c_int, ctypes.c_int)
+    user32.SetCursorPos.restype = wintypes.BOOL
+    user32.mouse_event.argtypes = (
+        wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
+        wintypes.DWORD, ctypes.c_void_p,
+    )
+    user32.mouse_event.restype = None
+    hwnds: list[int] = []
+
+    def inspect(hwnd, _):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length == 0:
+            return True
+        buff = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buff, length + 1)
+        if "Android Web Desktop" in buff.value:
+            hwnds.append(hwnd)
+        return True
+
+    deadline = time.monotonic() + 16
+    while time.monotonic() < deadline:
+        hwnds.clear()
+        user32.EnumWindows(callback(inspect), 0)
+        if hwnds:
+            break
+        time.sleep(0.35)
+    if not hwnds:
+        raise RuntimeError("Edge 应用窗口未能在 16 秒内显示")
+    hwnd = hwnds[0]
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        raise RuntimeError("无法读取 Edge 窗口位置")
+    left, top = rect.left, rect.top
+    width, height = rect.right - rect.left, rect.bottom - rect.top
+
+    # First move through normal top-level Windows APIs.
+    flags = 0x0004 | 0x0010  # SWP_NOZORDER | SWP_NOACTIVATE
+    for dx, dy in ((32, 24), (74, 50), (0, 0)):
+        if not user32.SetWindowPos(hwnd, None, left + dx, top + dy, width, height, flags):
+            raise RuntimeError("Edge 窗口移动失败")
+        time.sleep(0.20)
+    if not user32.IsWindow(hwnd):
+        raise RuntimeError("移动后 Edge 窗口消失")
+
+    # Also exercise actual title-bar mouse drag. During an interactive drag
+    # Windows enters its native moving message loop, the user-reported hang.
+    user32.SetForegroundWindow(hwnd)
+    time.sleep(0.15)
+    user32.SetCursorPos(left + 280, top + 17)
+    time.sleep(0.10)
+    user32.mouse_event(0x0002, 0, 0, 0, None)  # LEFTDOWN
+    try:
+        for step in range(1, 7):
+            user32.SetCursorPos(left + 280 + 12 * step, top + 17 + 5 * step)
+            time.sleep(0.08)
+    finally:
+        user32.mouse_event(0x0004, 0, 0, 0, None)  # LEFTUP
+    time.sleep(0.30)
+    if not user32.IsWindow(hwnd):
+        raise RuntimeError("拖动标题栏后 Edge 窗口消失")
 
 
 def main() -> None:
@@ -69,43 +204,72 @@ def main() -> None:
         self_test(index.parent)
         return
 
+    browser = edge_executable()
+    bridge = DesktopBridge()
+    server, url = start_edge_server(index.parent, bridge)
+    app_data = Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "AndroidWebDesktop"
+    temp_root = app_data / "edge-sessions"
+    temp_root.mkdir(parents=True, exist_ok=True)
     try:
-        import webview
-    except ImportError as exc:
-        raise SystemExit("pywebview is not installed") from exc
-
-    server, url = start_frontend_server(index.parent)
-    try:
-        bridge = DesktopBridge()
-        window = webview.create_window(
-            title=f"Android Web Desktop  ·  v{APP_VERSION}",
-            url=url,
-            js_api=bridge,
-            width=1360,
-            height=860,
-            min_size=(1000, 650),
-            background_color="#f8fafc",
-        )
-        bridge.window = window
-
-        def on_ready() -> None:
+        with tempfile.TemporaryDirectory(prefix="edge-", dir=str(temp_root), ignore_cleanup_errors=True) as profile:
+            command = [
+                str(browser), f"--app={url}", f"--user-data-dir={profile}",
+                "--no-first-run", "--no-default-browser-check",
+                "--disable-background-mode", "--disable-extensions",
+                "--window-size=1360,860",
+            ]
             if args.gui_smoke_test:
-                # GitHub-hosted Windows runners have no interactive user desktop.
-                # Check native window construction here; real Vue DOM tests run
-                # separately with headless Edge in the CI workflow.
-                def close_later() -> None:
-                    time.sleep(4)
+                command.extend(("--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"))
+            process = subprocess.Popen(command)
+            try:
+                if args.gui_smoke_test:
+                    # Expose the ephemeral debugging port to the CI script only.
+                    if os.environ.get("AWD_SMOKE_INFO"):
+                        Path(os.environ["AWD_SMOKE_INFO"]).write_text(
+                            json.dumps({"url": url, "profile": profile, "pid": process.pid}),
+                            encoding="utf-8",
+                        )
+                    _move_browser_window(process.pid)
+                    if process.poll() is not None:
+                        raise RuntimeError("移动窗口时浏览器意外退出")
+                    if os.environ.get("AWD_SMOKE_INFO"):
+                        metadata = Path(os.environ["AWD_SMOKE_INFO"])
+                        temporary = metadata.with_suffix(".tmp")
+                        temporary.write_text(
+                            json.dumps({"url": url, "profile": profile, "pid": process.pid,
+                                        "drag_complete": True}),
+                            encoding="utf-8",
+                        )
+                        temporary.replace(metadata)
+                    hold = min(max(float(os.environ.get("AWD_SMOKE_HOLD", "1")), 0), 40)
+                    done_file = os.environ.get("AWD_SMOKE_DONE")
+                    until = time.monotonic() + hold
+                    while time.monotonic() < until:
+                        if done_file and Path(done_file).is_file():
+                            break
+                        time.sleep(0.15)
+                else:
+                    process.wait()
+            finally:
+                if args.gui_smoke_test and process.poll() is None:
+                    process.terminate()
                     try:
-                        window.destroy()
-                    except Exception:
-                        pass
-                threading.Thread(target=close_later, daemon=True).start()
-
-        webview.start(on_ready, gui="edgechromium", debug=False)
+                        process.wait(timeout=8)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
     finally:
         server.shutdown()
         server.server_close()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        if os.name == "nt":
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0, str(exc), "Android Web Desktop 启动失败", 0x10
+            )
+        raise

@@ -52,7 +52,7 @@ const appSearch = ref('')
 const showSystem = ref(false)
 const activeOnly = ref<'all' | 'enabled' | 'disabled'>('all')
 const adbPath = ref('')
-const envVersion = ref('2.3.2')
+const envVersion = ref('2.4.0')
 const loading = ref('')
 const scanning = ref(false)
 const deviceLoading = ref(false)
@@ -435,7 +435,7 @@ async function copyText(value: string) {
 }
 function previewSetup() {
   ready.value = true
-  envVersion.value = '2.3.2'
+  envVersion.value = '2.4.0'
   adbPath.value = 'C:\\Android\\platform-tools\\adb.exe'
   devices.value = [{ serial: 'ZY22FQ7A9H', state: 'device', detail: 'usb:1-4 product:demo model:Pixel' },{ serial: '192.168.1.28:5555', state: 'offline' }]
   selected.value = 'ZY22FQ7A9H'
@@ -906,7 +906,7 @@ watch(showSystem, () => {
               <div class="panel-head"><div><h2>客户端信息</h2><p>Windows 图形化管理器</p></div></div>
               <div class="detail-grid">
                 <div class="detail-box"><span>当前版本</span><strong>v{{ envVersion }}</strong></div>
-                <div class="detail-box"><span>界面框架</span><strong>Vue 3 · WebView2</strong></div>
+                <div class="detail-box"><span>界面框架</span><strong>Vue 3 · Microsoft Edge</strong></div>
                 <div class="detail-box"><span>设计系统</span><strong>shadcn-vue 风格</strong></div>
               </div>
             </section>

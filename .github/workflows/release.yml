@@ -30,20 +30,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Edge 浏览器界面端到端测试
+      - name: Edge 浏览器界面与实际 Python 接口联动测试
         shell: pwsh
-        run: node installer/frontend/tests/e2e.mjs
+        run: |
+          node installer/frontend/tests/e2e.mjs
+          node installer/frontend/tests/edge-e2e.mjs
       - name: Windows 管理器后端回归测试
         shell: pwsh
         run: |
           python -m compileall -q installer
           python -m unittest discover -s installer/tests -p "test_manager_*.py" -v
-      - name: 构建独立 EXE 和快速启动便携包
+      - name: 构建原生 Edge 应用窗口与便携版
         shell: pwsh
         run: |
-          python -m pip install --disable-pip-version-check pywebview==6.2.1 pyinstaller==6.22.3
+          python -m pip install --disable-pip-version-check pyinstaller==6.22.3
           $assets = "installer/frontend/dist;installer/frontend/dist"
-          $common = @("--noconfirm","--clean","--windowed","--name","AndroidWebDesktopManager","--collect-all","webview","--add-data",$assets,"installer/app.py")
+          $common = @("--noconfirm","--clean","--windowed","--name","AndroidWebDesktopManager","--add-data",$assets,"installer/app.py")
           python -m PyInstaller --onedir @common
           if ($LASTEXITCODE -ne 0) { throw "Portable build failed" }
           $portableExe = (Resolve-Path "dist/AndroidWebDesktopManager/AndroidWebDesktopManager.exe").Path
@@ -52,8 +54,6 @@ jobs:
           $sw.Stop()
           if ($portable.ExitCode -ne 0) { throw "Portable build self-test failed" }
           Write-Host ("Portable EXE self-test duration: {0} ms" -f $sw.ElapsedMilliseconds)
-          # Apply a per-executable CLR load policy for the packaged portable DLLs.
-          Copy-Item -LiteralPath "installer/AndroidWebDesktopManager.exe.config" -Destination "dist/AndroidWebDesktopManager/AndroidWebDesktopManager.exe.config"
           Compress-Archive -Path "dist/AndroidWebDesktopManager" -DestinationPath "dist/AndroidWebDesktopManager-Portable.zip" -CompressionLevel Optimal -Force
           if (!(Test-Path "dist/AndroidWebDesktopManager-Portable.zip")) { throw "Portable ZIP missing" }
 
@@ -66,19 +66,19 @@ jobs:
           if ($single.ExitCode -ne 0) { throw "Single-file EXE self-test failed" }
           Write-Host ("Single-file EXE self-test duration: {0} ms" -f $sw.ElapsedMilliseconds)
 
-          $gui = Start-Process -FilePath $portableExe -ArgumentList "--gui-smoke-test" -PassThru
-          try {
-            $gui.WaitForExit(45000) | Out-Null
-            $gui.Refresh()
-            if (!$gui.HasExited) { throw "Portable WebView2 GUI smoke timed out" }
-            if ($gui.ExitCode -ne 0) { throw "Portable WebView2 GUI smoke failed: $($gui.ExitCode)" }
-          } finally {
-            if (!$gui.HasExited) { Stop-Process -Id $gui.Id -Force -ErrorAction SilentlyContinue }
-          }
-          Write-Host "Portable WebView2 GUI smoke passed"
-      - name: 便携版Internet安全标记下的WebView2启动验收
+      - name: Windows 实际拖动窗口后验证 Edge 和设备管理接口
         shell: pwsh
-        run: ./installer/tests/windows-portable-tests.ps1
+        run: |
+          node installer/frontend/tests/windows-edge-window.mjs
+          $env:AWD_EXE_PATH = (Resolve-Path "dist/AndroidWebDesktopManager.exe").Path
+          node installer/frontend/tests/windows-edge-window.mjs
+          Remove-Item Env:AWD_EXE_PATH
+      - name: 确认安装包不再依赖 pythonnet/WinForms
+        shell: pwsh
+        run: |
+          if (Test-Path "dist/AndroidWebDesktopManager/_internal/pythonnet") { throw "Unexpected pythonnet runtime in portable build" }
+          if (Test-Path "dist/AndroidWebDesktopManager/_internal/webview") { throw "Unexpected pywebview runtime in portable build" }
+          Write-Host "WinForms/pythonnet removed from both packages"
       - uses: actions/upload-artifact@v4
         with:
           name: windows-manager
@@ -112,7 +112,6 @@ jobs:
           node -e "const p=require('./installer/frontend/package.json'); if(p.version!==process.argv[1]) process.exit(1)" "$VERSION"
           test -s dist/windows/AndroidWebDesktopManager.exe
           test -s dist/windows/AndroidWebDesktopManager-Portable.zip
-          unzip -p dist/windows/AndroidWebDesktopManager-Portable.zip AndroidWebDesktopManager/AndroidWebDesktopManager.exe.config | grep -Fq 'loadFromRemoteSources enabled="true"'
           test -f installer/adb_client.py
           test -f web-console/main.go
           (cd web-console && go test ./... && go vet ./...)

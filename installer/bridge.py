@@ -28,7 +28,6 @@ from deployment import (
 
 class DesktopBridge:
     def __init__(self):
-        self.window = None
         self._lock = threading.RLock()
         self._busy = threading.Lock()
         self._events: deque[dict[str, Any]] = deque(maxlen=300)
@@ -38,7 +37,7 @@ class DesktopBridge:
         self.settings = self._load_settings()
         saved = self.settings.get("adb_path", "")
         self.adb_path = Path(saved) if saved and Path(saved).is_file() else locate_adb()
-        self.version = "2.3.2"
+        self.version = "2.4.0"
 
     def _load_settings(self) -> dict:
         try:
@@ -135,18 +134,25 @@ class DesktopBridge:
         return self._choose_file("*.zip") or ""
 
     def _choose_file(self, pattern: str) -> str | None:
-        if self.window is None:
-            raise ValueError("窗口尚未准备完成")
-        import webview
-        option = getattr(getattr(webview, "FileDialog", None), "OPEN", None)
-        if option is None:
-            option = getattr(webview, "OPEN_DIALOG", 10)
-        paths = self.window.create_file_dialog(
-            option,
-            allow_multiple=False,
-            file_types=(f"文件 ({pattern})",),
-        )
-        return str(paths[0]) if paths else None
+        """Windows native file chooser independent of the Edge app's UI thread."""
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        try:
+            root.withdraw()
+            root.attributes("-topmost", True)
+            if pattern == "*.zip":
+                filters = [("ZIP 安装包", "*.zip"), ("所有文件", "*.*")]
+            elif pattern.lower() == "adb.exe":
+                filters = [("ADB 可执行文件", "adb.exe"), ("可执行文件", "*.exe")]
+            else:
+                filters = [("所有文件", "*.*")]
+            choice = filedialog.askopenfilename(
+                parent=root, title="请选择文件", filetypes=filters
+            )
+            return choice or None
+        finally:
+            root.destroy()
 
     def install_official_adb(self) -> str:
         def operation():
