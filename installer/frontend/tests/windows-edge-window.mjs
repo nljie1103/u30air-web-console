@@ -10,6 +10,7 @@ import { chromium } from 'playwright-core';
 // title-bar drag -> live Vue DOM and real Python-bridge response over CDP.
 if (process.platform !== 'win32') throw new Error('Windows drag integration test only');
 
+const expectedVersion = JSON.parse(readFileSync(resolve('installer/frontend/package.json'), 'utf8')).version;
 const exe = resolve(process.env.AWD_EXE_PATH || 'dist/AndroidWebDesktopManager/AndroidWebDesktopManager.exe');
 if (!existsSync(exe)) throw new Error('Portable EXE missing: ' + exe);
 const folder = mkdtempSync(join(tmpdir(), 'awd-window-drag-'));
@@ -58,7 +59,7 @@ try {
     if (!api) throw new Error('Live Python bridge missing');
     return await api.environment();
   });
-  assert.equal(v.version, '2.4.0');
+  assert.equal(v.version, expectedVersion);
   console.log('PASS packaged Edge window rendered Vue and Python bridge');
 
   // The EXE itself is moving the real HWND, including an actual title-bar
@@ -74,7 +75,7 @@ try {
   await page.locator('button.nav-item[title="工作台"]').click({ timeout: 9000 });
   assert.equal((await page.locator('.page-content h1').textContent()).trim(), '工作台');
   const postMove = await page.evaluate(async () => await window.pywebview.api.environment());
-  assert.equal(postMove.version, '2.4.0');
+  assert.equal(postMove.version, expectedVersion);
   console.log('PASS actual Windows HWND reposition + mouse drag + responsive Vue/Python after moving');
   console.log('WINDOW_DRAG_INTEGRATION_OK');
 } finally {
