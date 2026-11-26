@@ -116,10 +116,12 @@ jobs:
           python3 -m unittest discover -s installer/tests -p "test_manager_*.py"
           python3 -m compileall -q installer
           python3 - <<'PY'
-          from pathlib import Path
-          roots={p.name for p in Path('.').iterdir() if not p.name.startswith('.') and p.name!='README.md'}
-          assert roots == {'installer','web-console'}, roots
-          print('Top-level project layout verified')
+          import subprocess
+          paths=subprocess.check_output(['git','ls-files'],text=True).splitlines()
+          roots={p.split('/')[0] for p in paths}
+          expected={'.github','.gitignore','README.md','installer','web-console'}
+          assert roots == expected, (roots,expected)
+          print('Tracked project layout verified; generated dist/ excluded')
           PY
       - name: 构建 Android ARM64 ZIP
         shell: bash
