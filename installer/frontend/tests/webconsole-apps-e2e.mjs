@@ -45,11 +45,18 @@ const server = createServer(async (req, res) => {
   }
   if (path.pathname === '/api/app-icon') return respond(200, png, 'image/png');
   if (path.pathname === '/api/screen') return respond(200, png, 'image/png');
+  if (path.pathname === '/api/novnc/status') return respond(200, {
+    available: false, url: '', reason: '5800 端口未提供 noVNC 服务，设备上尚未部署独立 VNC 服务与网页代理'
+  });
   if (path.pathname === '/api/control') {
     let body = '';
     for await (const chunk of req) body += chunk;
     const command = JSON.parse(body);
     calls.push(command);
+    if ((command.action === 'reboot' && command.confirm !== '重启') ||
+        (command.action === 'shutdown' && command.confirm !== '关机')) {
+      return respond(400, { error: '必须输入确认内容' });
+    }
     if (command.package === 'com.example.hidden') {
       return respond(503, { error: '应用没有可用的桌面启动入口（后台组件）' });
     }
@@ -85,6 +92,45 @@ try {
   await page.waitForFunction(() => document.querySelector('#toast')?.textContent?.includes('没有可用的桌面启动入口'));
   assert.deepEqual(exceptions, [], 'Frontend script must remain stable on application launch errors');
   console.log('PASS backend permission/launcher errors remain readable and do not break UI');
+  await page.locator('#vncStatus').getByText('5800 端口未提供 noVNC 服务', { exact: false }).waitFor();
+  assert.equal(await page.locator('#vncLink').isVisible(), false,
+    'noVNC link must be hidden when no server is installed');
+  console.log('PASS optional noVNC correctly reports missing 5800 server, no dead link');
+
+  await page.locator('button[data-action="wake"]').click();
+  await page.locator('button[data-action="screenoff"]').click();
+  assert(calls.some(c => c.action === 'wake'));
+  assert(calls.some(c => c.action === 'screenoff'));
+  await page.locator('button[data-swipe="up"]').click();
+  await page.locator('button[data-swipe="down"]').click();
+  await page.locator('button[data-swipe="left"]').click();
+  await page.locator('button[data-swipe="right"]').click();
+  const swipes = calls.filter(c => c.action === 'swipe');
+  assert.equal(swipes.length, 4);
+  assert(swipes[0].y > swipes[0].y2, 'up swipe should move toward top');
+  assert(swipes[1].y < swipes[1].y2, 'down swipe should move toward bottom');
+  assert(swipes[2].x > swipes[2].x2, 'left swipe should move toward left');
+  assert(swipes[3].x < swipes[3].x2, 'right swipe should move toward right');
+  console.log('PASS wake, screen sleep, all directional swipe button actions');
+
+  // Browser confirmation is required even if the backend also validates
+  // the exact requested word. The mock never reboots real hardware.
+  page.once('dialog', async dialog => {
+    assert.equal(dialog.type(), 'prompt');
+    await dialog.accept('wrong');
+  });
+  await page.locator('#shutdownDevice').click();
+  assert.equal(calls.filter(c => c.action === 'shutdown').length, 0);
+  page.once('dialog', async dialog => {
+    assert.equal(dialog.type(), 'prompt');
+    await dialog.accept('重启');
+  });
+  await page.locator('#rebootDevice').click();
+  await page.waitForFunction(() => document.querySelector('#toast')?.textContent?.includes('已发送重启'));
+  assert(calls.some(c => c.action === 'reboot' && c.confirm === '重启'));
+  console.log('PASS power controls require explicit Chinese confirmation text');
+
+  assert.deepEqual(exceptions, [], 'Frontend script must stay error-free');
   console.log('ANDROID_WEB_APPS_E2E_OK');
 } finally {
   if (browser) await browser.close();

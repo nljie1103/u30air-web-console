@@ -76,6 +76,34 @@ if(login){
   catch(err){toast(err.message);return false;}
  }
  document.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',()=>control(b.dataset.action)));
+ document.querySelectorAll('[data-swipe]').forEach(button=>button.addEventListener('click',()=>{
+  if(!screen.naturalWidth||!screen.naturalHeight){
+   toast('屏幕画面尚未加载，请先刷新画面');
+   return;
+  }
+  const w=screen.naturalWidth,h=screen.naturalHeight;
+  const pt=(x,y)=>({x:Math.round(w*x),y:Math.round(h*y)});
+  const commands={
+   up:{...pt(.5,.82),x2:pt(.5,.21).x,y2:pt(.5,.21).y},
+   down:{...pt(.5,.20),x2:pt(.5,.82).x,y2:pt(.5,.82).y},
+   left:{...pt(.82,.52),x2:pt(.18,.52).x,y2:pt(.18,.52).y},
+   right:{...pt(.18,.52),x2:pt(.82,.52).x,y2:pt(.82,.52).y},
+  };
+  const swipe=commands[button.dataset.swipe];
+  if(swipe)void control('swipe',swipe);
+ }));
+ const expandButton=byId('expandDesktop');
+ expandButton.addEventListener('click',async()=>{
+  const el=byId('desktopCol');
+  try{
+   if(document.fullscreenElement)await document.exitFullscreen();
+   else if(el.requestFullscreen)await el.requestFullscreen();
+   else throw Error('当前浏览器不支持全屏模式');
+  }catch(err){toast('无法进入全屏：'+err.message)}
+ });
+ document.addEventListener('fullscreenchange',()=>{
+  expandButton.textContent=document.fullscreenElement?'退出全屏':'全屏控制';
+ });
  byId('refresh').addEventListener('click',capture);
  byId('logout').addEventListener('click',async()=>{try{await api('/api/logout','POST');location.replace('/');}catch(err){toast(err.message)}});
  function coordinates(event){
@@ -168,7 +196,41 @@ if(login){
   }
  }
  byId('searchApps').addEventListener('input',renderApps);
- byId('vncLink').href='http://'+location.hostname+':5800/vnc.html';
+ async function probeVnc(){
+  const button=byId('probeVnc'),link=byId('vncLink'),status=byId('vncStatus');
+  button.disabled=true;
+  status.textContent='正在检查独立 noVNC 是否可用…';
+  link.hidden=true;link.removeAttribute('href');
+  try{
+   const result=await api('/api/novnc/status');
+   if(result.available && typeof result.url==='string' &&
+      result.url === 'http://'+location.hostname+':5800/vnc.html'){
+    link.href=result.url;link.hidden=false;
+    status.textContent='检测到可访问的 noVNC 页面，可在新标签打开。';
+   }else{
+    status.textContent=result.reason||'未检测到独立 noVNC 服务；请继续使用上方的内置远程控制。';
+   }
+  }catch(err){
+   status.textContent='noVNC 检测不可用：'+err.message;
+  }finally{button.disabled=false}
+ }
+ byId('probeVnc').addEventListener('click',()=>{void probeVnc()});
+ async function powerAction(action,label){
+  const answer=window.prompt(
+   '危险操作：'+label+'设备会中断当前远程连接。\nAndroid 可能要求 Root 或特殊权限。\n请输入“'+label+'”确认：','');
+  if(answer===null)return;
+  if(answer!==label){toast('已取消：输入内容与“'+label+'”不一致');return}
+  try{
+   await api('/api/control','POST',{action,confirm:label});
+   toast('已发送'+label+'命令，请观察设备是否响应');
+  }catch(err){
+   if(err instanceof TypeError){
+    toast('与设备连接已断开，无法确认'+label+'是否成功执行');
+   }else toast(err.message);
+  }
+ }
+ byId('rebootDevice').addEventListener('click',()=>{void powerAction('reboot','重启')});
+ byId('shutdownDevice').addEventListener('click',()=>{void powerAction('shutdown','关机')});
  byId('checkUpdate').addEventListener('click',async()=>{
   const button=byId('checkUpdate');button.disabled=true;byId('updatePill').textContent='查询中';
   try{
@@ -188,7 +250,7 @@ if(login){
   try{await api('/api/update/apply','POST');toast('更新已准备就绪，服务即将重启');setTimeout(()=>location.reload(),14000);}
   catch(err){toast(err.message);button.disabled=false;}
  });
- status();loadApps();capture();
+ status();loadApps();capture();void probeVnc();
  setInterval(capture,1500);setInterval(status,12000);
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)capture()});
 }

@@ -322,6 +322,7 @@ func (a *app) handler() http.Handler {
 			Y       int
 			X2      int
 			Y2      int
+			Confirm string
 		}
 		if json.NewDecoder(r.Body).Decode(&in) != nil {
 			fail(w, 400, "invalid request")
@@ -338,7 +339,9 @@ func (a *app) handler() http.Handler {
 		case "recents":
 			args = []string{"keyevent", "187"}
 		case "wake":
-			args = []string{"keyevent", "224"}
+			args = []string{"keyevent", "224"} // KEYCODE_WAKEUP: only wakes, does not unlock
+		case "screenoff":
+			args = []string{"keyevent", "223"} // KEYCODE_SLEEP: sleep without power toggle
 		case "tap":
 			if !valid(in.X) || !valid(in.Y) {
 				fail(w, 400, "invalid coordinates")
@@ -351,6 +354,24 @@ func (a *app) handler() http.Handler {
 				return
 			}
 			args = []string{"swipe", strconv.Itoa(in.X), strconv.Itoa(in.Y), strconv.Itoa(in.X2), strconv.Itoa(in.Y2), "320"}
+		case "reboot", "shutdown":
+			expected := "重启"
+			if in.Action == "shutdown" {
+				expected = "关机"
+			}
+			if in.Confirm != expected {
+				fail(w, 400, "请确认操作：必须填写“"+expected+"”")
+				return
+			}
+			// Use Android's svc power manager. This does not silently elevate
+			// privileges; some OEM builds can restrict these operations.
+			if err := executePowerAction(r.Context(), in.Action, runWith); err != nil {
+				log.Printf("power %s rejected: %v", in.Action, err)
+				fail(w, 503, err.Error())
+				return
+			}
+			respond(w, 200, map[string]string{"status": "sent"})
+			return
 		case "launch":
 			if !packageRe.MatchString(in.Package) {
 				fail(w, 400, "invalid package name")
@@ -374,6 +395,22 @@ func (a *app) handler() http.Handler {
 			return
 		}
 		respond(w, 200, map[string]string{"status": "sent"})
+	})
+	mux.HandleFunc("/api/novnc/status", func(w http.ResponseWriter, r *http.Request) {
+		if !a.authed(r) {
+			fail(w, 401, "login required")
+			return
+		}
+		if r.Method != "GET" {
+			fail(w, 405, "method not allowed")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		url, reason := probeNoVNC(ctx, a.addr)
+		respond(w, 200, map[string]any{
+			"available": url != "", "url": url, "reason": reason,
+		})
 	})
 	mux.HandleFunc("/api/update/check", func(w http.ResponseWriter, r *http.Request) {
 		if !a.authed(r) {
@@ -458,7 +495,11 @@ func main() {
 		updateHelper(*addr, *state, *previous, *expected)
 		return
 	}
-	a := &app{addr: *addr, state: *state, password: passwordAt(*state), secret: randomBytes(32), httpClient: &http.Client{Timeout: 45 * time.Second}}
+	githubClient, err := githubHTTPClient()
+	if err != nil {
+		log.Fatal("GitHub HTTPS 信任配置错误：", err)
+	}
+	a := &app{addr: *addr, state: *state, password: passwordAt(*state), secret: randomBytes(32), httpClient: githubClient}
 	_ = os.WriteFile(filepath.Join(*state, "server.pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0600)
 	var serverReady atomic.Bool
 	if err := startLocalHealth(*state, &serverReady); err != nil {

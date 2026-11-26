@@ -16,16 +16,48 @@
   <div class="top-right"><span class="dot" id="liveDot"></span><span class="mini" id="online">正在连接</span><span class="mini version" id="version">v—</span><button class="icon-button" id="logout" title="退出登录" aria-label="退出登录"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 20H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4M15 16l4-4-4-4M19 12H9"/></svg></button></div>
  </header>
  <main class="workspace">
-  <section class="desktop-col" aria-label="远程画面">
-   <div class="screen-top"><div><strong id="deviceName">Android 设备</strong><span class="secondary" id="deviceInfo">正在获取设备信息</span></div><div class="screen-tools"><span class="tiny-tag">浏览器控制</span><button id="refresh" title="立即刷新画面" aria-label="刷新画面" class="small-button">刷新画面</button></div></div>
+  <section class="desktop-col" id="desktopCol" aria-label="远程画面">
+   <div class="screen-top"><div><strong id="deviceName">Android 设备</strong><span class="secondary" id="deviceInfo">正在获取设备信息</span></div><div class="screen-tools"><span class="tiny-tag">浏览器控制</span><button id="expandDesktop" title="进入全屏控制模式" class="small-button">全屏控制</button><button id="refresh" title="立即刷新画面" aria-label="刷新画面" class="small-button">刷新画面</button></div></div>
    <div class="screen-frame" id="screenFrame"><div class="empty-state" id="emptyState"><span class="screen-icon">▣</span><strong>正在获取屏幕画面</strong><span>首次连接可能需要几秒钟</span></div><img id="screen" alt="Android 屏幕画面" draggable="false"></div>
-   <div class="toolbar"><div class="btn-group"><button data-action="back">← 返回</button><button data-action="home">⌂ 主页</button><button data-action="recents">▣ 最近任务</button><button data-action="wake">唤醒</button></div><div class="frame-info"><span id="frameStatus">自动刷新 · 1.5 秒</span></div></div>
+   <div class="toolbar">
+    <div class="btn-group">
+      <button data-action="back" title="返回上一级">← 返回</button>
+      <button data-action="home" title="回到 Android 主屏幕">⌂ 主页</button>
+      <button data-action="recents" title="显示最近任务">▣ 最近任务</button>
+      <button data-action="wake" title="点亮屏幕，不会自动解锁">☼ 唤醒</button>
+      <button data-action="screenoff" title="关闭屏幕显示但保持设备运行">◐ 熄屏</button>
+    </div>
+    <div class="frame-info"><span id="frameStatus">自动刷新 · 1.5 秒</span></div>
+   </div>
+   <div class="gesture-row" role="group" aria-label="滑动手势">
+    <span class="gesture-caption">方向滑动</span>
+    <button type="button" data-swipe="up" title="从屏幕底部向上滑，通常打开应用列表">↑ 上滑</button>
+    <button type="button" data-swipe="down" title="从屏幕顶部向下滑">↓ 下滑</button>
+    <button type="button" data-swipe="left" title="向左滑动屏幕">← 左滑</button>
+    <button type="button" data-swipe="right" title="向右滑动屏幕">→ 右滑</button>
+   </div>
   </section>
   <aside class="sidebar">
    <section class="panel"><div class="panel-head"><h2>应用</h2><span class="small-muted" id="appCount">—</span></div><p>选择设备上已安装的应用，即可直接打开。</p><input id="searchApps" type="search" placeholder="搜索应用名称或包名" aria-label="搜索应用"><div class="apps" id="appList"><div class="muted">加载应用列表中…</div></div></section>
    <section class="panel"><div class="panel-head"><h2>设备信息</h2></div><div class="info-line"><span>Android</span><b id="androidVersion">—</b></div><div class="info-line"><span>架构</span><b id="architecture">—</b></div><div class="info-line"><span>访问地址</span><b id="hostName">—</b></div></section>
    <section class="panel"><div class="panel-head"><h2>检查更新</h2><span class="small-muted" id="updatePill">未检查</span></div><p>手动检查 GitHub 版本。安装前可阅读更新内容。</p><div class="panel-actions"><button class="light" id="checkUpdate">检查更新</button><button class="primary" id="applyUpdate" disabled>安装更新</button></div><div id="releaseNote" class="release-note" hidden></div></section>
-   <section class="panel"><div class="panel-head"><h2>实时桌面</h2><span class="tiny-tag">可选</span></div><p>已配置 VNC 服务的设备，可使用其网页客户端获得更流畅的画面。</p><a id="vncLink" class="secondary-link" target="_blank" rel="noopener">打开 noVNC 页面 ↗</a></section>
+   <section class="panel">
+    <div class="panel-head"><h2>独立 noVNC</h2><span class="tiny-tag">可选组件</span></div>
+    <p>当前 8765 的实时画面由本项目直接提供，不依赖 noVNC。独立 noVNC 需要另行运行 VNC 服务与 WebSocket 网页代理。</p>
+    <div id="vncStatus" class="vnc-status" aria-live="polite">正在检查 5800 端口是否部署 noVNC…</div>
+    <div class="panel-actions">
+      <button class="light" id="probeVnc" type="button">重新检测</button>
+      <a id="vncLink" class="secondary-link" target="_blank" rel="noopener" hidden>打开已检测到的 noVNC ↗</a>
+    </div>
+   </section>
+   <section class="panel">
+    <div class="panel-head"><h2>设备电源</h2><span class="tiny-tag">危险操作</span></div>
+    <p>关机会断开热点和网页连接，重启也可能中断当前会话。Android 系统可能要求 Root 或特殊权限。</p>
+    <div class="panel-actions power-actions">
+      <button id="rebootDevice" type="button" class="light">重启设备</button>
+      <button id="shutdownDevice" type="button" class="danger">关闭设备电源</button>
+    </div>
+   </section>
   </aside>
  </main>
  <div id="toast" role="status" aria-live="polite"></div>

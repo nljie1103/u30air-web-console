@@ -67,7 +67,7 @@ func TestProtectedRoutesAndLogin(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w
 	}
-	for _, p := range []string{"/api/status", "/api/apps", "/api/screen", "/api/app-info?package=com.example.app", "/api/app-icon?package=com.example.app", "/api/update/check"} {
+	for _, p := range []string{"/api/status", "/api/apps", "/api/screen", "/api/app-info?package=com.example.app", "/api/app-icon?package=com.example.app", "/api/novnc/status", "/api/update/check"} {
 		if got := request("GET", p, false, "", "").Code; got != 401 {
 			t.Fatalf("%s should reject guest, got %d", p, got)
 		}
@@ -85,6 +85,13 @@ func TestProtectedRoutesAndLogin(t *testing.T) {
 	if got := request("POST", "/api/control", true, "http://evil.local", "{}").Code; got != 403 {
 		t.Fatalf("origin bypass: %d", got)
 	}
+	if got := request("POST", "/api/control", true, "", "{\"action\":\"shutdown\"}").Code; got != 400 {
+		t.Fatalf("shutdown must require explicit confirmation: %d", got)
+	}
+	if got := request("POST", "/api/control", true, "", "{\"action\":\"reboot\",\"confirm\":\"关机\"}").Code; got != 400 {
+		t.Fatalf("reboot must reject wrong confirmation: %d", got)
+	}
+
 	if got := request("POST", "/api/control", true, "", "{\"action\":\"launch\",\"package\":\"example;rm -rf /\"}").Code; got != 400 {
 		t.Fatalf("injection not blocked: %d", got)
 	}

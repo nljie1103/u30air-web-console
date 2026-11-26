@@ -24,7 +24,7 @@ from browser_lifecycle import (
 from edge_host import start_edge_server
 from local_server import start_frontend_server
 
-APP_VERSION = "2.4.3"
+APP_VERSION = "2.4.4"
 
 
 def frontend_file() -> Path:
