@@ -18,10 +18,13 @@ import time
 from urllib.request import urlopen
 
 from bridge import DesktopBridge
+from browser_lifecycle import (
+    visible_edge_windows, wait_for_app_window, keep_server_until_window_closed
+)
 from edge_host import start_edge_server
 from local_server import start_frontend_server
 
-APP_VERSION = "2.4.2"
+APP_VERSION = "2.4.3"
 
 
 def frontend_file() -> Path:
@@ -190,10 +193,26 @@ def _move_browser_window(edge_pid: int) -> None:
         raise RuntimeError("拖动标题栏后 Edge 窗口消失")
 
 
+def _startup_event(home: Path, message: str) -> None:
+    """Best-effort diagnostic log; never records ADB credentials or tokens."""
+    try:
+        from datetime import datetime
+        home.mkdir(parents=True, exist_ok=True)
+        logfile = home / "manager-startup.log"
+        if logfile.exists() and logfile.stat().st_size > 180_000:
+            logfile.replace(home / "manager-startup.previous.log")
+        with logfile.open("a", encoding="utf-8") as stream:
+            stream.write(datetime.now().isoformat(timespec="seconds") +
+                         " " + message + "\n")
+    except OSError:
+        pass
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Android Web Desktop Manager")
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--gui-smoke-test", action="store_true")
+    parser.add_argument("--lifecycle-smoke-test", action="store_true")
     args = parser.parse_args()
 
     index = frontend_file()
@@ -206,11 +225,19 @@ def main() -> None:
 
     browser = edge_executable()
     bridge = DesktopBridge()
-    server, url = start_edge_server(index.parent, bridge)
     app_data = Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "AndroidWebDesktop"
+    _startup_event(app_data, "Starting Windows manager " + APP_VERSION)
+    server, url = start_edge_server(index.parent, bridge)
     temp_root = app_data / "edge-sessions"
     temp_root.mkdir(parents=True, exist_ok=True)
     try:
+        # The HTTP server must be serving the Vue page before Edge is
+        # launched. On failure, do not leave Edge on its built-in error page.
+        with urlopen(url, timeout=4) as response:
+            if response.status != 200 or b'id="app"' not in response.read(100_000):
+                raise RuntimeError("Windows 管理界面本机服务启动未就绪")
+        _startup_event(app_data, "Loopback server ready on localhost")
+        old_edge_windows = visible_edge_windows()
         with tempfile.TemporaryDirectory(prefix="edge-", dir=str(temp_root), ignore_cleanup_errors=True) as profile:
             command = [
                 str(browser), f"--app={url}", f"--user-data-dir={profile}",
@@ -218,9 +245,15 @@ def main() -> None:
                 "--disable-background-mode", "--disable-extensions",
                 "--window-size=1360,860",
             ]
-            if args.gui_smoke_test:
+            if args.gui_smoke_test or args.lifecycle_smoke_test:
                 command.extend(("--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"))
             process = subprocess.Popen(command)
+            _startup_event(app_data, f"Edge app bootstrap spawned (PID {process.pid})")
+            if args.lifecycle_smoke_test and os.environ.get("AWD_SMOKE_INFO"):
+                Path(os.environ["AWD_SMOKE_INFO"]).write_text(
+                    json.dumps({"url": url, "profile": profile, "pid": process.pid}),
+                    encoding="utf-8",
+                )
             try:
                 if args.gui_smoke_test:
                     # Expose the ephemeral debugging port to the CI script only.
@@ -249,7 +282,24 @@ def main() -> None:
                             break
                         time.sleep(0.15)
                 else:
-                    process.wait()
+                    # Edge can hand off the app window to a new process and
+                    # exit its initial launcher. process.wait() is NOT a
+                    # reliable indicator that the browser window has closed.
+                    hwnd = wait_for_app_window(process, old_edge_windows)
+                    _startup_event(app_data, f"Edge app window opened (HWND {hwnd})")
+                    if args.lifecycle_smoke_test and os.environ.get("AWD_SMOKE_INFO"):
+                        metadata = Path(os.environ["AWD_SMOKE_INFO"])
+                        staging = metadata.with_suffix(".tmp")
+                        staging.write_text(
+                            json.dumps({"url": url, "profile": profile, "pid": process.pid,
+                                        "window_ready": True}), encoding="utf-8",
+                        )
+                        staging.replace(metadata)
+                    if process.poll() is not None:
+                        _startup_event(app_data,
+                                       "Edge launcher exited but window remains; server retained")
+                    keep_server_until_window_closed(hwnd)
+                    _startup_event(app_data, "Edge app window closed")
             finally:
                 if args.gui_smoke_test and process.poll() is None:
                     process.terminate()

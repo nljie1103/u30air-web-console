@@ -74,6 +74,13 @@ jobs:
           $env:AWD_EXE_PATH = (Resolve-Path "dist/AndroidWebDesktopManager.exe").Path
           node installer/frontend/tests/windows-edge-window.mjs
           Remove-Item Env:AWD_EXE_PATH
+      - name: Windows 首次打开和再次启动真实窗口生命周期测试
+        shell: pwsh
+        run: |
+          node installer/frontend/tests/windows-edge-lifecycle.mjs
+          $env:AWD_EXE_PATH = (Resolve-Path "dist/AndroidWebDesktopManager.exe").Path
+          node installer/frontend/tests/windows-edge-lifecycle.mjs
+          Remove-Item Env:AWD_EXE_PATH
       - name: 确认安装包不再依赖 pythonnet/WinForms
         shell: pwsh
         run: |

@@ -43,7 +43,7 @@
 
 **网关地址说明：** Windows 管理器会区分热点/局域网地址与蜂窝数据 10.x 私网地址。对于使用 192.168.0.1 作为管理网关的 U30 Air，可在“部署与更新”页面选择或手动填入 192.168.0.1，部署后的网页访问地址为 http://192.168.0.1:8765/ 。这个地址与官方后台（通常为 80 端口）、UFI 插件（例如 2333 端口）通常可共存，前提是设备实际拥有该网卡地址且端口没有冲突。已经绑定在旧 10.x 地址的服务，必须重新部署才能切换监听地址；单纯刷新浏览器不会迁移服务。对于其他 Android 设备，不强行使用 192.168.0.1。
 
-管理器可以使用已有的 `adb.exe`，也提供从 Google 官方下载 Platform Tools 的入口。若设备显示 `unauthorized` 或 `offline`，需在 Android 侧完成调试授权或恢复连接，不能靠程序绕过。
+**Windows 首次启动与 Edge 说明：** Windows 管理器使用本机 Microsoft Edge 的独立应用窗口显示 Vue 3 UI，Python 后端只在本机 127.0.0.1 随机端口提供受限接口。它不是远程网页服务；安装设备端仍独立监听设备的热点管理网关（如 192.168.0.1:8765）。自 v2.4.3 起，管理器在打开 Edge 前验证本机页面已就绪，并跟踪真实应用窗口，避免浏览器启动进程提前退出造成 ERR_CONNECTION_REFUSED。若仍有首次打开问题，可从 Windows 本地 %LOCALAPPDATA%\AndroidWebDesktop\manager-startup.log 查看非敏感启动记录。\n\n管理器可以使用已有的 `adb.exe`，也提供从 Google 官方下载 Platform Tools 的入口。若设备显示 `unauthorized` 或 `offline`，需在 Android 侧完成调试授权或恢复连接，不能靠程序绕过。
 
 ### Linux / macOS · ADB 脚本
 
