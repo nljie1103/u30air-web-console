@@ -26,7 +26,7 @@ except (ImportError, OSError):
 
 class FakeBridge:
     def __init__(self, adb=True):
-        self.version = "2.5.1"
+        self.version = "2.5.2"
         self.adb = adb
         self.calls = []
     def environment(self):
@@ -52,6 +52,9 @@ class FakeBridge:
         self.calls.append(("install_official_adb",))
         self.adb=True
         return r"C:\AndroidWebDesktop\platform-tools\adb.exe"
+    def install_application(self,serial,source,remote):
+        self.calls.append(("install_application",serial,source,remote))
+        return "Success"
     def list_apps(self,serial,system=False):
         return [{"name":"com.v2ray.ang","system":False,"disabled":False}]
 
@@ -93,7 +96,7 @@ class TestManagerQtClassic(TestCase):
         self.assertEqual(self._js("document.querySelectorAll('.stat-card').length"),4)
         self.assertEqual(self._js("document.querySelectorAll('.nav-item').length"),6)
         self.assertEqual(self._js("getComputedStyle(document.querySelector('.sidebar')).backgroundColor"),"rgb(255, 255, 255)")
-        self.assertEqual(self._js("document.querySelector('.sidebar-profile span').textContent"),"v2.5.1")
+        self.assertEqual(self._js("document.querySelector('.sidebar-profile span').textContent"),"v2.5.2")
         self.assertTrue(self.window.view.url().toString().startswith("awdapp://"))
         self.assertFalse("127.0.0.1" in self.window.view.url().toString())
 
@@ -118,12 +121,16 @@ class TestManagerQtClassic(TestCase):
         self._js("window.pywebview.api.environment().then(v=>window.__envReply=JSON.stringify(v))")
         self._wait(lambda:bool(self._js("window.__envReply")))
         obj=json.loads(self._js("window.__envReply"))
-        self.assertEqual(obj["version"],"2.5.1")
+        self.assertEqual(obj["version"],"2.5.2")
         self.assertTrue(obj["adb_found"])
         self.assertIn(("environment",),self.bridge.calls)
         self._js("window.pywebview.api.list_devices().then(v=>window.__deviceReply=JSON.stringify(v))")
         self._wait(lambda:bool(self._js("window.__deviceReply")))
         self.assertEqual(json.loads(self._js("window.__deviceReply"))[0]["serial"],"MOCK-U30-AIR")
+        self._js("window.pywebview.api.install_application('MOCK-U30-AIR','https://example.com/a.apk',true).then(v=>window.__apk=v)")
+        self._wait(lambda:self._js("window.__apk")=="Success")
+        self.assertIn(("install_application","MOCK-U30-AIR","https://example.com/a.apk",True),self.bridge.calls)
+        self._wait(lambda:self._js("document.querySelector('.brand-icon img')?.naturalWidth>0") is True)
         results=[]
         self.window.backend.completed.connect(lambda _task,data:results.append(json.loads(data)))
         self.window.backend.request("fake-id","exec_command",'["rm","-rf","/"]')

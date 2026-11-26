@@ -1,172 +1,207 @@
 <div align="center">
 
-<img src="installer/assets/app-icon.png" alt="Android Web Desktop 图标" width="108" />
+<img src="installer/assets/app-icon.png" width="108" alt="Android Web Desktop" />
 
 # Android Web Desktop
 
-**经典 Vue 3 / shadcn 风格 · Qt 6 Windows 客户端 · Android ARM64 网页控制台**
+**在浏览器中控制 Android，在 Windows 中轻松管理设备。**
 
-恢复 v2.4.x 深受用户认可的浅色卡片、Lucide 图标及可折叠侧边栏，支持从 Windows 发现、安装和维护 Android 设备的网页远程控制服务。
+适用于具有 ADB 调试能力的 Android 设备与随身 Wi-Fi，提供独立的局域网远程桌面和图形化设备管理器。
 
-[![Latest Release](https://img.shields.io/github/v/release/nljie1103/u30air-web-console?style=for-the-badge)](https://github.com/nljie1103/u30air-web-console/releases/latest)
+[![Release](https://img.shields.io/github/v/release/nljie1103/u30air-web-console?style=for-the-badge&color=2563eb)](https://github.com/nljie1103/u30air-web-console/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/nljie1103/u30air-web-console/release.yml?branch=main&style=for-the-badge)](https://github.com/nljie1103/u30air-web-console/actions)
-[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-314862?style=for-the-badge)](#安装)
+[![Windows](https://img.shields.io/badge/Windows-x64-334155?style=for-the-badge)](https://github.com/nljie1103/u30air-web-console/releases/latest)
+[![Android](https://img.shields.io/badge/Android-ARM64-16a34a?style=for-the-badge)](https://github.com/nljie1103/u30air-web-console/releases/latest)
 
-**[下载 Windows 便携版（推荐）](https://github.com/nljie1103/u30air-web-console/releases/latest/download/AndroidWebDesktopManager-Portable.zip)** · **[下载独立 EXE](https://github.com/nljie1103/u30air-web-console/releases/latest/download/AndroidWebDesktopManager.exe)** · **[Android ARM64 安装包](https://github.com/nljie1103/u30air-web-console/releases/latest/download/android-web-desktop-arm64.zip)**
+**[下载便携版](https://github.com/nljie1103/u30air-web-console/releases/latest/download/AndroidWebDesktopManager-Portable.zip)** · **[下载独立 EXE](https://github.com/nljie1103/u30air-web-console/releases/latest/download/AndroidWebDesktopManager.exe)** · **[设备端安装包](https://github.com/nljie1103/u30air-web-console/releases/latest/download/android-web-desktop-arm64.zip)**
 
 </div>
 
 ---
 
-## 项目简介
+## ✨ 功能特性
 
-本项目由两个相互独立的组件组成。
+<table>
+<tr><td width="50%" valign="top">
 
-- **Windows 管理器**：Qt 6 / PySide6 桌面窗口中嵌入 **QtWebEngine 渲染的原版 Vue 3 / shadcn-inspired 界面**。UI 使用 Lucide 图标、浅色卡片和可折叠侧边栏；Python 后端负责 ADB、设备信息、软件管理、下载和更新。用户无需安装 Edge 或 Python/Qt 环境，也无需单独运行本机 127.0.0.1 网页服务器。
-- **Android 网页控制台**：用 Go 编译为 Android ARM64 原生程序，在设备的局域网 IP 上提供 HTTP 服务（默认端口 **8765**）。支持浏览器查看和点击屏幕、上下左右滑动、应用管理、设备状态、唤醒/熄屏、重启/关机及自助在线更新。
+**🖥️ Windows 设备管理器**
 
-Windows 管理器目前仅打包 Windows 版本；Android 设备端可由 Linux/macOS 上已有的 ADB 安装。**需要明确：Qt 6 Windows 客户端内嵌 QtWebEngine（Chromium 渲染内核），不是纯 Qt Widgets；只是无需调用系统外部 Edge 浏览器。** 这能保留原版 Vue 3 的视觉和交互，但安装包比纯 Widgets 更大。设备的 **8765 远程控制台**仍通过普通手机/电脑浏览器访问。
+- Vue 3 / shadcn 风格，可折叠侧边栏
+- USB、无线 ADB 与设备信息
+- 一键安装官方 ADB 工具
+- APK 下载、安装与应用管理
+- 网页服务部署、升级和卸载
 
-## 主要功能
+</td><td width="50%" valign="top">
 
-| 组件 | 功能 |
-|---|---|
-| Windows 图形界面 | Qt 6 桌面窗口 + 原版 Vue 3/shadcn 风格，Lucide 图标、精致卡片、可折叠侧边栏和六个页面 |
-| 开箱即用 ADB | 自动检测本机 ADB；未找到时提供一键下载安装 Google 官方 Windows Platform-Tools |
-| 设备管理 | USB / 无线 ADB 连接、品牌型号、Android 版本、CPU 架构、系统构建、监听地址 |
-| 网关识别 | 优先热点/局域网接口，过滤常见蜂窝数据动态 IP，避免把服务绑定到不稳定的地址 |
-| 安装维护 | GitHub 最新版下载与 SHA256 校验、本地 ZIP、一键安装/升级、失败恢复、卸载 |
-| 应用管理 | 用户应用查看和卸载；非关键系统组件的停用/恢复及二次确认 |
-| 网页桌面 | 截图实时刷新、点按与拖动滑动、四方向快捷手势、主页/返回/最近任务、唤醒/熄屏 |
-| 设备资源 | CPU 占用、核心数、运行内存、设备存储空间、开机运行时长 |
-| 网页密码 | 首次安装选择是否启用；可设置任意非空简单密码或关闭登录，支持后续客户端和网页修改 |
-| 安全更新 | GitHub TLS 证书链验证、Release SHA256 校验、版本比对与失败恢复 |
+**📱 Android 网页控制台**
 
-### 两个不同的地址
+- 浏览器远程屏幕、点击与滑动
+- 应用列表、名称及可用图标
+- APK 直链安装与本地上传
+- CPU、内存、存储和运行时间
+- 可选密码、在线更新与电源控制
 
-| 用途 | 示例 |
-|---|---|
-| 中兴 U30 Air 官方管理后台 | http://192.168.0.1/ |
-| UFI 插件（如已单独安装） | http://192.168.0.1:2333/ |
-| 本项目 Android 网页桌面 | http://192.168.0.1:8765/ |
-
-这几个服务端口不同，通常可以共存。**192.168.0.1 必须确实配置在设备的热点网卡上**，不能把蜂窝网络分配的动态 10.x 地址直接当成固定管理地址。对于其他 Android 设备，以管理器检测到的实际局域网 IP 为准。
+</td></tr>
+</table>
 
 ---
 
-## 安装
+## 💻 系统要求
 
-### Windows 10 / 11 · 无需手动配置运行环境
+| 环境 | 要求 |
+|:---|:---|
+| Windows 管理器 | Windows 10 / 11 x64，发布包内含 Qt 运行库 |
+| Android 设备端 | ARM64、已授权的 ADB Shell、设备上的私有局域网 IPv4 |
+| 浏览器 | 能访问设备局域网地址的现代浏览器 |
+| 网络 | 初次下载 ADB、在线更新及链接安装 APK 需要互联网 |
 
-1. 下载 **AndroidWebDesktopManager-Portable.zip**，使用 7-Zip 或支持完整解压的工具解压全部文件，运行文件夹内的 `AndroidWebDesktopManager.exe`。也可以直接下载独立 EXE。
-2. 首次启动如果没有找到 ADB，会自动询问是否**一键下载安装 Google 官方 ADB**。同意后自动安装到当前 Windows 用户的 AppData 目录，**无需管理员权限、修改 PATH 或安装开发环境**。
-3. 用 USB 线连接 Android 设备，并在设备端授权 USB 调试；也支持输入设备 IP 和 ADB 端口连接无线 ADB。
-4. 选择设备，打开「部署与更新」，确认推荐的热点网关地址，然后选择 **从 GitHub 安装最新版** 或本地 ZIP。
-5. 在首次安装区域选择**不开启密码**，或勾选 **开启网页登录密码**并输入自己喜欢的密码（可只输入一个字符，无大小写/数字/符号要求）。启用密码时不能留空。
-6. 安装完成后打开设备的 8765 地址，就可以通过手机或电脑浏览器查看远程桌面。
+已在中兴 U30 Air（Android 13、ARM64）上验证过项目的基础远程桌面功能。其他型号须满足上述条件，具体权限与兼容性取决于系统固件；当前设备端未提供 32 位 ARM 或 x86 二进制。
 
-Google ADB 需要在首次下载时联网；**断网的首次安装无法自动获取 Google 工具**，但可以在设置页选取电脑已有的 `adb.exe`。ADB 安装程序来自 [Google 官方 Platform-Tools](https://developer.android.com/tools/releases/platform-tools)，本项目不将其打包成不明来源的可执行文件。
+> [!IMPORTANT]
+> 本项目的 8765 控制台使用 HTTP，仅应在可信局域网使用，不应映射至公网。关闭访问密码后，所有能访问管理地址的用户都可控制设备；网页 APK 安装开关并不替代身份认证。首次部署需要正常授权 ADB，核心功能不主动请求 Root；部分电源、安装及系统操作仍可能受到固件权限限制。
 
-### 设置或关闭网页密码
+---
 
-首次安装可以自由选择是否开启登录。**关闭密码时，同一可信局域网内能连接管理地址的设备均可打开控制台并发送控制命令**，建议仅在受信任的随身 Wi-Fi 网络中使用。
+## 📥 下载与快速开始
 
-后续可以在以下任意位置修改：
+| 文件 | 用途 |
+|:---|:---|
+| [Windows 便携版 ZIP](https://github.com/nljie1103/u30air-web-console/releases/latest/download/AndroidWebDesktopManager-Portable.zip) | 推荐：完整解压后运行 EXE |
+| [Windows 独立 EXE](https://github.com/nljie1103/u30air-web-console/releases/latest/download/AndroidWebDesktopManager.exe) | 单文件启动，运行时自行解包 |
+| [Android ARM64 ZIP](https://github.com/nljie1103/u30air-web-console/releases/latest/download/android-web-desktop-arm64.zip) | 设备端服务与命令行部署脚本 |
 
-- Windows 管理器 → **部署与更新 → 修改现有网页访问密码**（通过已授权 ADB 保存并重启设备端服务）。
-- 设备网页 → **访问密码**（已经开启登录的用户需先正常登录，保存后旧会话失效）。
+1. 打开 Windows 管理器；如未发现 ADB，点击「一键安装 ADB」，自动下载 Google 官方工具，无需修改 PATH。
+2. 连接设备并授权 USB 调试，或连接已启用 TCP ADB 的局域网设备。
+3. 在「部署与更新」选择实际热点网关地址，选择是否启用网页密码，再安装最新版。
+4. 安装完成后访问设备的 8765 端口，例如 [http://192.168.0.1:8765/](http://192.168.0.1:8765/)。
 
-已经安装的设备执行升级时，Windows 管理器默认**保留原有认证设置**，不会擅自清空密码。
+管理地址应以设备自身的局域网网卡为准，不能将移动网络动态 IP 当成固定热点网关。升级已部署服务时默认保留原有访问密码设置。
 
-### Linux / macOS · 命令行安装设备端
+<details>
+<summary><strong>Linux / macOS：使用命令行部署</strong></summary>
 
-下载 Android ARM64 ZIP，安装本地 ADB 并连接设备，在解压目录运行：
+预先安装 ADB、连接并授权设备；使用支持脚本所需命令的 Bash（macOS 需 Bash 4+）。解压 Android ARM64 安装包后执行：
 
 ```bash
 bash installer/install_linux_mac.sh
 ```
 
-多设备时可以指定 ADB 序列号及设备私有 IP：
+也可以在命令行指定设备序列号、局域网 IPv4 和端口。脚本为独立部署路径；Windows 管理器提供更完整的健康检查及恢复流程。
 
-```bash
-bash installer/install_linux_mac.sh <ADB_SERIAL> <DEVICE_LAN_IP> 8765
+</details>
+
+---
+
+## 📦 应用安装器
+
+无需维护应用商店目录，直接使用可信来源的 APK 下载地址或本地文件。
+
+| 安装入口 | 下载网络 | 安装方式 |
+|:---|:---|:---|
+| Windows · 下载并安装 | 电脑网络 | ADB |
+| Windows · 本地 APK | 无需下载 | ADB |
+| 8765 · 设备下载并安装 | Android 设备网络 | Android 包管理器 |
+| 8765 · 上传本地 APK | 浏览器已有文件 | Android 包管理器 |
+
+Windows 中进入「应用管理 → APK 安装器」。网页端先启用「APK 安装器」中的独立开关，再输入 HTTPS 下载直链或上传文件。
+
+> [!NOTE]
+> 当前支持不超过 128 MiB 的普通单文件 APK。直链需使用 HTTPS（443 端口）；设备下载不允许访问私有及保留地址。如果设备不能访问 GitHub，请改用电脑下载或浏览器上传。APK 需与设备系统、架构及已安装应用签名匹配。不会自动卸载旧应用，也不直接支持 XAPK、APKS、APKM 或 GitHub Release 页面解析。
+
+---
+
+## 🎮 使用指南
+
+### 远程桌面
+
+页面提供自动刷新截图、点击、手势、全屏以及返回、主页、最近任务、唤醒和熄屏。独立 noVNC 为可选外部服务，不随本项目安装。
+
+<details>
+<summary><strong>中兴 U30 Air 桌面操作</strong></summary>
+
+部分固件的 Launcher 没有桌面壁纸，只显示搜索框及短信快捷方式。黑色背景通常属于系统桌面的正常表现。先点击「主页」，然后从屏幕底部向上滑动（或点击「↑ 上滑」），即可尝试打开应用列表。
+
+</details>
+
+### 访问设置
+
+首次安装可选择免密码，开启时允许自定义任意非空密码。后续可在 Windows「部署与更新」或网页「访问密码」中修改。密码变更会使旧网页登录会话失效。
+
+网页端重启及关机需要确认。设备彻底关机后热点也会断开，不能依靠网页重新开机。
+
+### 升级与卸载
+
+通过 Windows「部署与更新」或 8765「检查更新」获取 GitHub 最新版。更新包使用 HTTPS 与 SHA256 校验；Windows 和网页的更新流程具有健康检查及恢复机制。
+
+> [!WARNING]
+> 卸载网页服务会删除本项目的设备端配置、密码、版本文件与日志，不会自动卸载其他 Android 应用。系统组件停用可能影响设备正常使用，操作前应核实用途。
+
+---
+
+## 🏗️ 技术架构
+
+```mermaid
+flowchart LR
+    A["Windows 管理器<br/>Qt 6 · Vue 3"] --> B["Python · ADB"]
+    B --> C["Android 设备"]
+    D["手机 / 电脑浏览器"] --> E["Go HTTP 服务 · 8765"]
+    E --> C
 ```
 
-安装脚本适用于已有 ADB 的终端，不提供 Qt 图形窗口。
+| 层级 | 技术 | 用途 |
+|:---|:---|:---|
+| Windows 窗口 | Qt 6 / PySide6 / Qt WebEngine | 内嵌前端，不依赖外部浏览器 |
+| 桌面界面 | Vue 3 / TypeScript / Lucide | shadcn 风格交互组件 |
+| 桌面后端 | Python / Qt WebChannel / ADB | 设备管理与部署 |
+| Android 服务 | Go / ARM64 | HTTP 接口、截图、系统调用 |
+| 网页界面 | HTML / CSS / JavaScript | 局域网远程控制 |
 
----
+Windows 包内含 Chromium 渲染组件，体积大于纯 Qt Widgets。管理界面通过内部资源协议加载，不需要本机 HTTP 服务器。
 
-## Android 网页端使用
-
-### 远程屏幕与设备信息
-
-用浏览器访问设备的 `http://局域网IP:8765/`。页面支持自动刷新屏幕画面，在图片中直接点击或滑动，也可使用「↑ 上滑 / ↓ 下滑 / ← 左滑 / → 右滑」快捷键，或进入全屏控制。
-
-**设备状态**卡片位于「应用」与「设备信息」之间，展示 CPU、内存、设备存储及开机时长，每 5 秒刷新。资源数据来自 Android 的系统统计接口，不需要 Root。系统限制读取时显示「不可用」，不会编造数据。
-
-**独立 noVNC 是可选组件，不随本项目安装。** 本项目的 8765 页面直接通过 Android 截图和输入命令运行，不需要 VNC/noVNC 或 WebSocket 代理。因此未部署独立 VNC 的设备不必访问 5800 端口。网页会检测是否真的存在 noVNC 客户端，再决定是否允许跳转。
-
-### U30 Air 设备使用指南
-
-中兴 U30 Air 的部分固件默认桌面**没有壁纸，看起来是黑色背景**，上面可能只显示搜索框和短信快捷图标。这通常是设备自带 Launcher 的界面表现，并不说明网页截图功能出错。
-
-要查看应用列表，可以先点「主页」，然后在屏幕上**从下往上滑动**，或者点击网页中的 **↑ 上滑**。这属于 Android Launcher 常见的应用抽屉操作；不同固件的启动器细节可能不一样，不能仅据此断定它是未经定制的原版 AOSP 桌面。
-
-### 重启、关机与唤醒
-
-「唤醒」用于点亮已休眠的屏幕，不会自动解锁；「熄屏」仅关闭屏幕显示。重启和关机需要二次确认，且可能受到设备固件权限限制。**关机后热点也会断开，远程网页无法把完全关机的设备再开机**。
-
----
-
-## 软件安全与限制
-
-- 网页服务只允许绑定到设备明确配置的**私有局域网地址**，不应暴露到公网。
-- 8765 默认使用 HTTP，并非加密 HTTPS。密码属于局域网便捷访问控制，**不建议用于不可信网络**。需要更严格隔离时，请使用可信网络、VPN 或其他访问控制，而不是将端口做公网映射。
-- 设备端在线检查更新使用有效的受信任 TLS 根证书，并验证 GitHub Release SHA256。对于精简 Android 系统可能出现的 `x509: certificate signed by unknown authority`，程序补充了受信任的 Mozilla CA 集合，**不会关闭证书校验**。
-- Windows 下载 Google ADB 和 Android Release 均需要互联网。未授权 USB 调试的设备无法通过客户端绕过 Android 授权。
-- 无法禁用系统关键组件、无法获得缺失的 Android 系统权限。停用系统组件前请先了解该组件作用。
-- U30 Air 的画面通过定时截图实现，**不是高帧率视频推流**。
-
----
-
-## 项目目录
+### 项目结构
 
 ```text
-android-web-desktop/
-├── .github/workflows/release.yml    # 仅 Windows Qt GUI + Android ARM64 的 CI/Release
-├── installer/                     # Windows Qt6 原生客户端源码
-│   ├── app.py                     # Qt 启动入口
-│   ├── qt_window.py               # QtWebEngine 容器、受限本地资源协议和异步 ADB 桥接
-│   ├── version.py                 # 唯一 Windows 客户端版本常量
-│   ├── bridge.py                  # 设备管理业务逻辑
-│   ├── adb_client.py              # USB/无线 ADB 操作
-│   ├── deployment.py              # 下载、认证选项、安装与恢复
-│   ├── frontend/                  # 恢复的 Vue3/shadcn 风格 Windows 页面源码
-│   │   ├── src/App.vue            # 六页面、卡片与设备下拉框
-│   │   ├── src/style.css          # 经典浅色视觉设计
-│   │   └── tests/                 # 浏览器交互回归
-│   ├── assets/                    # APP PNG / ICO / SVG 图标
-│   └── tests/                     # Windows Qt 与 ADB 回归测试
-├── web-console/                   # Android 设备端 Go + 浏览器页面
-│   ├── main.go                    # REST/HTTP 与系统控制
-│   ├── auth.go                    # 密码开关、认证与会话
-│   ├── metrics.go                 # CPU/内存/存储系统状态
-│   ├── update.go                  # 在线更新与恢复
-│   ├── trust.go                   # GitHub HTTPS 受信任 CA
-│   ├── web/                       # 手机/电脑访问的 HTML/CSS/JS
-│   ├── tests/                     # 浏览器端交互测试
-│   ├── deploy/                    # 设备端安装脚本
-│   ├── version.json               # 官方 Release 版本与说明
-│   └── go.mod
+.
+├── .github/workflows/       # CI 与 Release
+├── installer/              # Windows 客户端
+│   ├── frontend/           # Vue 3 界面
+│   ├── assets/             # 应用图标
+│   ├── apk.py              # APK 下载与安装
+│   ├── bridge.py           # 业务接口
+│   └── tests/              # 客户端回归测试
+├── web-console/            # Android 网页服务
+│   ├── web/                # 控制台界面
+│   ├── deploy/             # 安装脚本
+│   ├── apk.go              # 设备端 APK 安装
+│   └── version.json        # 发布版本及说明
 ├── .gitignore
 └── README.md
 ```
 
-仓库根目录仍只有上述五类文件。Windows 客户端的 Vue 3 页面已恢复，但渲染容器是 **QtWebEngine，不是外部 Edge/WebView2，也不是通过 localhost 启动的独立网页服务器**。Android 的 8765 网页端是另一个独立 HTML/JavaScript 界面。
+---
 
-### 从源码构建 Windows 客户端
+## 💾 数据与配置
 
-在 Windows 10/11 x64 环境中，使用 Python 3.12：
+| 数据 | 位置与保留方式 |
+|:---|:---|
+| Windows 管理器配置 | 当前用户 LOCALAPPDATA 下 AndroidWebDesktop/manager-settings.json |
+| Windows 官方 ADB | 同目录 platform-tools/ |
+| Android 服务 | /data/local/tmp/android-web-desktop/ |
+| Android 密码及安装开关 | 设备端服务目录下的 auth.json、password.txt、apk-install.enabled |
+| 设备日志 | 设备端 server.log；Windows 运行日志保留在当前会话 |
+| 下载与上传 APK | 临时文件，正常完成或失败后清理 |
+
+备份设备端配置时应妥善保管密码文件；本项目没有外部数据库。
+
+---
+
+## 🛠️ 开发与构建
+
+<details>
+<summary><strong>Windows 客户端</strong></summary>
+
+需要 Windows、Node.js 22 和 Python 3.12。使用 PowerShell：
 
 ```powershell
 npm ci --prefix installer/frontend
@@ -177,9 +212,12 @@ python installer/app.py --self-test
 python -m PyInstaller --onedir --windowed --name AndroidWebDesktopManager --icon installer/assets/app.ico --add-data "installer/assets;assets" --add-data "installer/frontend/dist;frontend/dist" installer/app.py
 ```
 
-发布流程在 GitHub Actions Windows runner 上构建 Vue 静态资源，再分别打包含 QtWebEngine 组件的便携版与独立 EXE。测试真实窗口移动、旧版侧边栏/设备下拉框、页面切换、QtWebChannel/Python ADB 交互。当前**仅分发 Windows 客户端**，不制作 macOS/Linux GUI 软件包。Qt for Python（包括 QtWebEngine）开源版依各组件的 LGPLv3/GPLv3 等适用许可，QtWebEngine 还涉及 Chromium 第三方许可证，见 [第三方声明](installer/THIRD_PARTY_NOTICES.md)。
+</details>
 
-### 从源码构建 Android ARM64 设备端
+<details>
+<summary><strong>Android ARM64 服务</strong></summary>
+
+需要 Go 1.23 或更新版本：
 
 ```bash
 cd web-console
@@ -187,16 +225,20 @@ go test ./...
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o desktopd .
 ```
 
+</details>
+
+正式版本由 GitHub Actions 构建，并执行前端交互、Qt 窗口、ADB、Go 并发及版本一致性测试。查看 [构建记录](https://github.com/nljie1103/u30air-web-console/actions) 与 [更新记录](https://github.com/nljie1103/u30air-web-console/releases)。
+
 ---
 
-## 帮助和反馈
+## 📮 反馈与第三方声明
 
-遇到无法识别设备时，检查 ADB 是否已安装、USB 调试是否授权、连接是否稳定及推荐 IP 是否属于热点网卡。更新失败时检查 GitHub 网络连通性、系统时间和证书错误提示。
+发现问题时请通过 [GitHub Issues](https://github.com/nljie1103/u30air-web-console/issues) 反馈，附上软件版本、设备型号与相关日志（请隐藏密码及敏感地址）。
 
-欢迎通过 [GitHub Issues](https://github.com/nljie1103/u30air-web-console/issues) 反馈问题。
+第三方组件：[Windows 客户端](installer/THIRD_PARTY_NOTICES.md) · [Android 服务](web-console/THIRD_PARTY_NOTICES.md)
 
 <div align="center">
 
-**[项目仓库](https://github.com/nljie1103/u30air-web-console)** · **[最新版本](https://github.com/nljie1103/u30air-web-console/releases/latest)**
+**Android Web Desktop** · [项目主页](https://github.com/nljie1103/u30air-web-console)
 
 </div>

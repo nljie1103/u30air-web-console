@@ -6,7 +6,7 @@ async function api(path,method='GET',data=null){
  const response=await fetch(path,opt);
  let result;
  try{result=await response.json();}catch{result={error:'服务返回异常'};}
- if(response.status===401){if(!byId('loginForm'))location.reload();throw Error('登录已过期');}
+ if(response.status===401&&!byId('loginForm')){location.reload();throw Error('登录已过期');}
  if(!response.ok)throw Error(result.error||'请求失败');
  return result;
 }
@@ -65,6 +65,56 @@ if(login){
    byId('metricsNote').textContent='实时';
   }catch(err){byId('metricsNote').textContent='读取失败'}
  }
+ const apkToggle=byId('apkToggle'),apkFields=byId('apkFields');
+ let apkBusy=false;
+ function apkMode(enabled){
+  apkToggle.checked=enabled;apkFields.hidden=!enabled;
+  byId('apkMode').textContent=enabled?'已启用':'已关闭';
+ }
+ async function loadAPKConfig(){
+  try{apkMode((await api('/api/apk/config')).enabled);apkToggle.disabled=false}
+  catch{byId('apkMode').textContent='不可用'}
+ }
+ apkToggle.addEventListener('change',async()=>{
+  const enabled=apkToggle.checked;
+  if(enabled&&!confirm('仅在可信局域网启用 APK 安装。确认启用？')){apkMode(false);return}
+  apkToggle.disabled=true;
+  try{apkMode((await api('/api/apk/config','POST',{enabled})).enabled)}
+  catch(e){apkMode(!enabled);toast(e.message)}
+  finally{apkToggle.disabled=false}
+ });
+ async function installAPK(source,file=false){
+  if(apkBusy||!apkToggle.checked)return;
+  if(!confirm('确认安装可信来源的 APK？不会自动卸载旧应用。'))return;
+  apkBusy=true;apkToggle.disabled=true;
+  const buttons=['apkDownload','apkChoose'].map(byId);
+  buttons.forEach(b=>b.disabled=true);
+  const progress=byId('apkProgress');
+  progress.textContent='正在准备安装…';
+  const poll=setInterval(async()=>{
+   try{
+    const p=await api('/api/apk/progress');
+    if(apkBusy&&p.stage)progress.textContent=p.stage+(p.received?' · '+(p.received/1048576).toFixed(1)+' MiB'+(p.total>0?' / '+(p.total/1048576).toFixed(1)+' MiB':''):'');
+   }catch{}
+  },800);
+  try{
+   if(file){
+    if(!source.name.toLowerCase().endsWith('.apk')||source.size>128*1048576||!source.size)throw Error('请选择 128 MiB 以内的 APK');
+    const response=await fetch('/api/apk/install',{method:'POST',headers:{'Content-Type':'application/vnd.android.package-archive','X-Desktop-Action':'1'},body:source});
+    const result=await response.json();if(!response.ok)throw Error(result.error||'安装失败');
+   }else await api('/api/apk/install','POST',{url:source});
+   progress.textContent='安装完成';toast('APK 安装成功');await loadApps();
+  }catch(e){progress.textContent=e.message;toast(e.message)}
+  finally{clearInterval(poll);apkBusy=false;apkToggle.disabled=false;buttons.forEach(b=>b.disabled=false)}
+ }
+ byId('apkDownload').addEventListener('click',()=>{
+  const url=byId('apkURL').value.trim();
+  if(!url.startsWith('https://')){toast('请输入 HTTPS APK 下载链接');return}
+  void installAPK(url);
+ });
+ byId('apkChoose').addEventListener('click',()=>byId('apkFile').click());
+ byId('apkFile').addEventListener('change',e=>{const file=e.target.files[0];e.target.value='';if(file)void installAPK(file,true)});
+ void loadAPKConfig();
  let passwordWasEnabled=false;
  const authToggle=byId('authToggle'),authPassword=byId('authPassword');
  const syncAuthVisibility=()=>{

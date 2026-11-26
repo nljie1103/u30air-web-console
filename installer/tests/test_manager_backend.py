@@ -306,7 +306,6 @@ class TestDeployment(unittest.TestCase):
         self.assertTrue(any(c[-3:] == ("rm", "-f", adb_client.DATA_DIR+"/current") for c in fake.commands))
 
     def test_adb_forwarded_health_verification(self):
-        import io
         class Response:
             status = 200
             def __init__(self, data):

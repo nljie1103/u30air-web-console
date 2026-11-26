@@ -17,7 +17,7 @@ def main() -> int:
     args = parser.parse_args()
 
     # QApplication is constructed on the main thread, never on an ADB worker.
-    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication
     from PySide6.QtGui import QIcon
     from qt_window import ManagerWindow, register_web_scheme, frontend_root

@@ -1,12 +1,13 @@
 <script setup lang="ts">
+import { version as clientVersion } from '../package.json'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
-  Activity, AppWindow, ArrowDownToLine, ArrowRight, ArrowUpRight,
-  Check, CheckCheck, CheckCircle2, ChevronDown, ChevronRight, CircleAlert,
-  Clock3, CloudDownload, Code2, Command, Copy, Download, FileArchive, FileDown,
-  FolderOpen, HardDrive, House, Info, LayoutDashboard, Link2, ListFilter,
-  LoaderCircle, Menu, Monitor, MoreHorizontal, Package, PanelLeftClose,
-  PanelLeftOpen, PlugZap, Power, RefreshCw, RotateCcw, Search, ServerCog,
+  Activity, AppWindow, ArrowRight, ArrowUpRight,
+  Check, CheckCircle2, ChevronDown, ChevronRight, CircleAlert,
+  Clock3, CloudDownload, Code2, Copy, Download, FileArchive,
+  FolderOpen, HardDrive, Info, LayoutDashboard, Link2, ListFilter,
+  LoaderCircle, Menu, Monitor, Package, PanelLeftClose,
+  PanelLeftOpen, PlugZap, Power, RefreshCw, RotateCcw, Search,
   Settings2, ShieldAlert, Smartphone, Terminal, Trash2, Unplug, Usb, Wifi, X,
 } from 'lucide-vue-next'
 
@@ -52,10 +53,14 @@ let initFailureCount = 0
 const info = ref<InfoData>({})
 const applications = ref<AndroidApp[]>([])
 const appSearch = ref('')
+const apkLink = ref('')
+const apkBusy = ref(false)
+const apkResult = ref('')
+const apkProgress = computed(() => entries.value.filter(e => /下载 APK|电脑网络下载 APK|ADB 安装 APK/.test(e.message)).at(-1)?.message || '正在处理 APK…')
 const showSystem = ref(false)
 const activeOnly = ref<'all' | 'enabled' | 'disabled'>('all')
 const adbPath = ref('')
-const envVersion = ref('2.5.1')
+const envVersion = ref(clientVersion)
 const loading = ref('')
 const scanning = ref(false)
 const deviceLoading = ref(false)
@@ -146,6 +151,7 @@ async function work<T>(message: string, action: () => Promise<T>, done?: (result
   if (loading.value) { showToast('已有任务正在执行', 'info'); return }
   loading.value = message
   error.value = ''
+  infoDismissed.value = false
   try {
     const response = await action()
     if (done) await done(response)
@@ -243,6 +249,11 @@ async function loadDevice(serial: string) {
   if (selected.value !== serial) {
     applications.value = []
     appsLoadedFor.value = ''
+    info.value = {}
+    targetIp.value = ''
+    currentAuthKnown.value = false
+    editAuthPassword.value = ''
+    apkResult.value = ''
   }
   selected.value = serial
   deviceLoading.value = true
@@ -355,7 +366,7 @@ async function loadAuth() {
     currentAuthEnabled.value = Boolean(state.enabled)
     editAuthEnabled.value = Boolean(state.enabled)
     currentAuthKnown.value = true
-  } catch { currentAuthKnown.value = false }
+  } catch { if (selected.value === serial) currentAuthKnown.value = false }
 }
 function authOption() {
   if (installed.value && keepExistingAuth.value) return { enabled:null as boolean|null, password:'' }
@@ -431,6 +442,33 @@ function uninstall() {
     },
   })
 }
+async function installAPK(remote: boolean) {
+  if (!requireDevice() || loading.value || preview) return
+  const serial = selected.value
+  let source: string
+  try { source = remote ? apkLink.value.trim() : await invoke<string>('choose_apk') }
+  catch (cause) { showToast(String(cause), 'error'); return }
+  if (selected.value !== serial) return
+  if (!source) return
+  openDialog({
+    title: '确认安装 APK',
+    description: (remote ? '将使用电脑网络下载 APK，再通过 ADB 安装。' : '将通过 ADB 安装所选本地 APK。') + ' 请确认文件来源可信；不会自动卸载旧应用。',
+    confirmText: '安装应用',
+    onConfirm: async () => {
+      apkBusy.value = true
+      apkResult.value = ''
+      const poll = setInterval(() => void getLogs(), 800)
+      try {
+        await work('安装 APK', () => invoke('install_application', serial, source, remote), async () => {
+          apkResult.value = '安装成功'
+          showToast('APK 安装成功')
+          await loadApps(true)
+        })
+        if (error.value) apkResult.value = error.value
+      } finally { clearInterval(poll); apkBusy.value = false }
+    },
+  })
+}
 function removeApplication(pkg: AndroidApp) {
   if (!requireDevice()) return
   if (pkg.system) {
@@ -501,7 +539,6 @@ async function copyText(value: string) {
 }
 function previewSetup() {
   ready.value = true
-  envVersion.value = '2.5.1'
   adbPath.value = 'C:\\Android\\platform-tools\\adb.exe'
   devices.value = [{ serial: 'ZY22FQ7A9H', state: 'device', detail: 'usb:1-4 product:demo model:Pixel' },{ serial: '192.168.1.28:5555', state: 'offline' }]
   selected.value = 'ZY22FQ7A9H'
@@ -603,7 +640,7 @@ watch(showSystem, () => {
   <div class="app-root" :class="{ 'sidebar-closed': collapsed }">
     <aside class="sidebar" aria-label="主导航">
       <div class="sidebar-head">
-        <div class="brand-icon"><Monitor :size="19" :stroke-width="2.3" /></div>
+        <div class="brand-icon"><img src="/app-icon.svg" alt="" /></div>
         <div v-show="!collapsed" class="brand-words">
           <strong>Android Desktop</strong>
           <small>Device Manager</small>
@@ -642,7 +679,7 @@ watch(showSystem, () => {
       <div class="sidebar-footer">
         <span class="avatar-mark">A</span>
         <div v-show="!collapsed" class="sidebar-profile"><b>Desktop Manager</b><span>v{{ envVersion }}</span></div>
-        <MoreHorizontal v-show="!collapsed" :size="17" class="muted" />
+
       </div>
     </aside>
 
@@ -801,7 +838,7 @@ watch(showSystem, () => {
             </article>
 
             <article class="panel">
-              <div class="panel-head"><div><h2>快捷操作</h2><p>管理选中的 Android 设备</p></div><MoreHorizontal :size="19" class="muted" /></div>
+              <div class="panel-head"><div><h2>快捷操作</h2><p>管理选中的 Android 设备</p></div></div>
               <div class="quick-list">
                 <button class="quick-action" :disabled="!selectedReady || !!loading" @click="deploy('online')">
                   <span class="quick-icon" style="background:#eef2ff;color:#4f46e5"><CloudDownload :size="18" /></span>
@@ -871,6 +908,16 @@ watch(showSystem, () => {
         </template>
 
         <template v-else-if="current === 'applications'">
+          <section class="panel apk-panel">
+            <div class="panel-head"><div><h2>APK 安装器</h2><p>通过电脑网络下载 APK，或直接选择本地安装包</p></div><Package :size="20" /></div>
+            <div class="apk-fields">
+              <div class="input-with-icon"><Link2 :size="17" /><input v-model="apkLink" aria-label="APK 下载链接" placeholder="https://…/app.apk" /></div>
+              <button class="btn btn-primary" :disabled="!selectedReady || !!loading || !apkLink.trim()" @click="installAPK(true)"><Download :size="16" /> 下载并安装</button>
+              <button class="btn btn-outline" :disabled="!selectedReady || !!loading" @click="installAPK(false)"><FolderOpen :size="16" /> 本地 APK</button>
+            </div>
+            <div class="panel-footnote"><Info :size="16" />仅支持单文件 APK（128 MiB 以内），系统校验签名与兼容性。</div>
+            <div v-if="apkBusy || apkResult" class="apk-feedback" role="status"><LoaderCircle v-if="apkBusy" :size="16" class="spin" />{{ apkBusy ? apkProgress : apkResult }}</div>
+          </section>
           <section class="panel app-panel">
             <div class="panel-head"><div><h2>应用列表</h2><p>查询已安装的软件包与运行状态</p></div>
               <div class="button-row"><span class="tag tag-muted">{{ filteredApps.length }} 个应用</span>
@@ -878,7 +925,7 @@ watch(showSystem, () => {
             </div>
             <div class="filters-row">
               <div class="search-input"><Search :size="17" /><input v-model="appSearch" placeholder="搜索应用包名…" aria-label="搜索应用" /></div>
-              <button class="toggle" :class="{ enabled: showSystem }" @click="showSystem = !showSystem"><ListFilter :size="16" />{{ showSystem ? '系统应用' : '用户应用' }}</button>
+              <button class="toggle" :class="{ enabled: showSystem }" :disabled="!!loading || !selectedReady" @click="showSystem = !showSystem"><ListFilter :size="16" />{{ showSystem ? '系统应用' : '用户应用' }}</button>
               <div class="status-segments" role="group" aria-label="筛选状态">
                 <button v-for="option in ([{ value: 'all', label: '全部' }, { value: 'enabled', label: '已启用' }, { value: 'disabled', label: '已停用' }] as const)"
                   :key="option.value" type="button" :class="{ active: activeOnly === option.value }"
@@ -1024,7 +1071,7 @@ watch(showSystem, () => {
               <div class="panel-head"><div><h2>客户端信息</h2><p>Qt 6 · Vue 3 Windows 管理器</p></div></div>
               <div class="detail-grid">
                 <div class="detail-box"><span>当前版本</span><strong>v{{ envVersion }}</strong></div>
-                <div class="detail-box"><span>界面框架</span><strong>Vue 3 · Microsoft Edge</strong></div>
+                <div class="detail-box"><span>界面框架</span><strong>Vue 3 · Qt WebEngine</strong></div>
                 <div class="detail-box"><span>设计系统</span><strong>shadcn-vue 风格</strong></div>
               </div>
             </section>

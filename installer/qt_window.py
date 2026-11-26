@@ -139,10 +139,10 @@ ALLOWED_METHODS = frozenset({
     "get_logs", "clear_logs", "connect", "set_adb_path",
     "install_official_adb", "check_release", "install_latest",
     "install_local", "read_auth", "configure_auth",
-    "uninstall", "uninstall_app", "set_system_app",
+    "uninstall", "install_application", "uninstall_app", "set_system_app",
     "reboot", "poweroff", "open_web",
 })
-UI_METHODS = frozenset({"choose_adb", "choose_local_zip"})
+UI_METHODS = frozenset({"choose_adb", "choose_local_zip", "choose_apk"})
 
 
 class JobSignals(QObject):
@@ -193,6 +193,9 @@ class QtBridge(QObject):
         except Exception as exc:
             self._reply(task_id, False, error=str(exc))
             return
+        self._start_job(task_id, fn, args)
+
+    def _start_job(self, task_id, fn, args):
         job = Job(task_id, fn, args)
         self.jobs[task_id] = job
         job.signals.success.connect(lambda identifier, val: self._reply(identifier, True, val))
@@ -208,17 +211,10 @@ class QtBridge(QObject):
             if not path:
                 self._reply(task_id, True, "")
                 return
-            # Let normal path validation run in the worker.
-            job = Job(task_id, self.bridge.set_adb_path, [path])
-            self.jobs[task_id] = job
-            job.signals.success.connect(lambda i, val: self._reply(i, True, val))
-            job.signals.failure.connect(lambda i, err: self._reply(i, False, error=err))
-            job.signals.done.connect(lambda i: self.jobs.pop(i, None))
-            self.pool.start(job)
+            self._start_job(task_id, self.bridge.set_adb_path, [path])
             return
-        file, _ = QFileDialog.getOpenFileName(
-            None, "选择 Android ARM64 ZIP", "", "ZIP 安装包 (*.zip)"
-        )
+        title, pattern = ("选择 APK", "Android APK (*.apk)") if method == "choose_apk" else ("选择 Android ARM64 ZIP", "ZIP 安装包 (*.zip)")
+        file, _ = QFileDialog.getOpenFileName(None, title, "", pattern)
         self._reply(task_id, True, file)
 
     def _reply(self, task_id: str, success: bool, result=None, error=""):

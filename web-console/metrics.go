@@ -43,7 +43,7 @@ func cpuSnapshot(path string) (usageSnapshot, error) {
 		return usageSnapshot{}, errors.New("missing cpu times")
 	}
 	var total uint64
-	for _, n := range stats {
+	for _, n := range stats[:min(len(stats), 8)] {
 		total += n
 	}
 	return usageSnapshot{total: total, idle: stats[3] + stats[4]}, nil
@@ -75,6 +75,7 @@ func readMemory(path string) (total, used uint64, err error) {
 	}
 	defer file.Close()
 	var available uint64
+	var availableKnown bool
 	scan := bufio.NewScanner(file)
 	for scan.Scan() {
 		fields := strings.Fields(scan.Text())
@@ -85,7 +86,9 @@ func readMemory(path string) (total, used uint64, err error) {
 		case "MemTotal:":
 			total, _ = strconv.ParseUint(fields[1], 10, 64)
 		case "MemAvailable:":
-			available, _ = strconv.ParseUint(fields[1], 10, 64)
+			var parseErr error
+			available, parseErr = strconv.ParseUint(fields[1], 10, 64)
+			availableKnown = parseErr == nil
 		}
 	}
 	if scan.Err() != nil {
@@ -93,6 +96,9 @@ func readMemory(path string) (total, used uint64, err error) {
 	}
 	if total == 0 {
 		return 0, 0, errors.New("MemTotal missing")
+	}
+	if !availableKnown {
+		return 0, 0, errors.New("MemAvailable missing")
 	}
 	if available > total {
 		available = total

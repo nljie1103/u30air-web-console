@@ -17,21 +17,22 @@ var stylesheet string
 //go:embed web/app.js
 var javascript string
 
+//go:embed web/app-icon.svg
+var appIcon string
+
 func staticAssets(mux *http.ServeMux) {
-	mux.HandleFunc("/assets/app.css", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" {
-			http.Error(w, "method not allowed", 405)
-			return
-		}
-		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		w.Write([]byte(stylesheet))
-	})
-	mux.HandleFunc("/assets/app.js", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" {
-			http.Error(w, "method not allowed", 405)
-			return
-		}
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Write([]byte(javascript))
-	})
+	for _, asset := range []struct{ path, contentType, content string }{
+		{"/assets/app.css", "text/css; charset=utf-8", stylesheet},
+		{"/assets/app.js", "text/javascript; charset=utf-8", javascript},
+		{"/assets/app-icon.svg", "image/svg+xml", appIcon},
+	} {
+		mux.HandleFunc(asset.path, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != "GET" {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			w.Header().Set("Content-Type", asset.contentType)
+			_, _ = w.Write([]byte(asset.content))
+		})
+	}
 }

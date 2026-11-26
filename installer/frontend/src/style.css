@@ -353,7 +353,10 @@ h1 { font-size: 26px; line-height: 1.18; letter-spacing: -.9px; color: #1d2737; 
 .auth-setup{border:1px solid #e7edf4;background:#f9fbfe;border-radius:10px;padding:15px;margin:16px 0 18px}
 .auth-setup-head{display:flex;align-items:center;gap:8px;margin:0 0 10px;color:#49647e;font-size:12px}
 .auth-check{display:flex;align-items:center;gap:8px;margin:11px 0;color:#445976;font-size:11.5px;cursor:pointer}
-.auth-check input{accent-color:#24374f;width:16px;height:16px;margin:0}
+.auth-check input{appearance:none;flex:0 0 16px;width:16px;height:16px;margin:0;border:1px solid #a9b8ca;border-radius:4px;background:#fff;display:grid;place-content:center;cursor:pointer}
+.auth-check input:checked{background:#24374f;border-color:#24374f}
+.auth-check input:checked::after{content:"";width:7px;height:4px;border-left:2px solid white;border-bottom:2px solid white;transform:rotate(-45deg) translateY(-1px)}
+.auth-check input:focus-visible{outline:2px solid #88a8c6;outline-offset:2px}
 .auth-field{display:block;width:100%;height:40px;border:1px solid #dce5ee;background:white;border-radius:8px;
   padding:0 12px;font-size:12px;color:#25354a}
 .auth-field:focus{border-color:#88a8c6;outline:2px solid #bfd0e744}
@@ -361,3 +364,9 @@ h1 { font-size: 26px; line-height: 1.18; letter-spacing: -.9px; color: #1d2737; 
 .auth-existing .separator{margin:18px 0}
 .auth-existing .panel-head{margin-bottom:12px}
 .auth-save{margin-top:13px}
+
+.apk-panel{margin-bottom:17px}
+.apk-fields{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.apk-fields .input-with-icon{flex:1 1 260px}
+.apk-feedback{display:flex;align-items:center;gap:8px;color:#52647c;font-size:12px;overflow-wrap:anywhere;margin-top:10px}
+.brand-icon img{width:36px;height:36px;display:block}

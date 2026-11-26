@@ -250,7 +250,6 @@ def install_on_device(
         if configured_auth:
             # Only a temporary local file is used, not an ADB shell argument,
             # so a custom password can contain spaces and symbols.
-            import os
             with tempfile.TemporaryDirectory(prefix="awd-auth-") as temp:
                 local = Path(temp) / "auth.json"
                 local.write_text(json.dumps({

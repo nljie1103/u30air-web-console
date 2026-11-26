@@ -27,6 +27,7 @@ const labels = new Map([
 ]);
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==', 'base64');
 const calls = [];
+let apkEnabled = false;
 
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://localhost');
@@ -35,9 +36,20 @@ const server = createServer(async (req, res) => {
     res.end(Buffer.isBuffer(body) ? body : (typeof body === 'string' ? body : JSON.stringify(body)));
   };
   if (path.pathname === '/assets/app.css') return respond(200, readFileSync(join(root, 'app.css')), 'text/css');
+  if (path.pathname === '/assets/app-icon.svg') return respond(200, readFileSync(join(root, 'app-icon.svg')), 'image/svg+xml');
+  if (path.pathname === '/api/apk/config') {
+    if (req.method === 'POST') {let body='';for await(const c of req)body+=c;apkEnabled=JSON.parse(body).enabled;}
+    return respond(200,{enabled:apkEnabled});
+  }
+  if (path.pathname === '/api/apk/progress') return respond(200,{stage:'传输 APK',received:1024,total:2048});
+  if (path.pathname === '/api/apk/install') {
+    const chunks=[];for await(const c of req)chunks.push(c);
+    calls.push({action:'apk-install',kind:req.headers['content-type'],body:Buffer.concat(chunks).toString()});
+    return respond(200,{status:'installed'});
+  }
   if (path.pathname === '/assets/app.js') return respond(200, readFileSync(join(root, 'app.js')), 'text/javascript');
   if (path.pathname === '/') return respond(200, readFileSync(join(root, 'index.html')), 'text/html');
-  if (path.pathname === '/api/status') return respond(200, { version: '2.5.1', manufacturer: 'ZTE', model: 'U30 Air', android: '13', abi: 'arm64-v8a' });
+  if (path.pathname === '/api/status') return respond(200, { version: '2.5.2', manufacturer: 'ZTE', model: 'U30 Air', android: '13', abi: 'arm64-v8a' });
   if (path.pathname === '/api/metrics') return respond(200, {
     cpuPercent: 28.5, cpuCores: 8,
     memoryTotal: 4294967296, memoryUsed: 2147483648,
@@ -148,6 +160,20 @@ try {
   await page.getByText('28.5% · 8 核', { exact: true }).waitFor();
   assert((await page.locator('#ramText').textContent()).includes('2.0 GB'));
   assert((await page.locator('#storageText').textContent()).includes('4.0 GB'));
+  await page.waitForFunction(()=>document.querySelector('.brand-mark')?.naturalWidth>0);
+  await page.locator('#apkMode').getByText('已关闭').waitFor();
+  page.once('dialog',d=>d.accept());
+  await page.locator('#apkToggle').check();
+  await page.locator('#apkURL').fill('https://example.com/app.apk');
+  page.once('dialog',d=>d.accept());
+  await page.locator('#apkDownload').click();
+  await page.getByText('安装完成',{exact:true}).waitFor();
+  assert(calls.some(c=>c.action==='apk-install'&&JSON.parse(c.body).url==='https://example.com/app.apk'));
+  page.once('dialog',d=>d.accept());
+  await page.locator('#apkFile').setInputFiles({name:'test.apk',mimeType:'application/vnd.android.package-archive',buffer:Buffer.from('fixture')});
+  await page.waitForFunction(()=>document.querySelector('#apkProgress')?.textContent==='安装完成');
+  assert(calls.some(c=>c.action==='apk-install'&&c.kind==='application/vnd.android.package-archive'));
+  console.log('PASS web APK enable, direct download and file upload');
   await page.locator('#authMode').getByText('无需登录').waitFor();
   await page.locator('#authToggle').check();
   await page.locator('#authPassword').fill('1');

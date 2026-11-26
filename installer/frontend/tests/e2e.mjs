@@ -53,7 +53,7 @@ try {
       window.__calls.push({name,args});return response;
     };
     window.pywebview = { api: {
-      environment: capture('environment',{version:'2.5.1',adb_path:'C:\\Android\\adb.exe',adb_found:true}),
+      environment: capture('environment',{version:'2.5.2',adb_path:'C:\\Android\\adb.exe',adb_found:true}),
       list_devices: capture('list_devices',[
         {serial:'U30-AIR-TEST',state:'device'},
         {serial:'192.168.0.8:5555',state:'offline'}]),
@@ -67,8 +67,10 @@ try {
       read_auth:capture('read_auth',{enabled:true,configured:true}),
       configure_auth:capture('configure_auth',{enabled:false,message:'saved'}),
       list_apps:capture('list_apps',[{name:'com.v2ray.ang',system:false,disabled:false}]),
+      choose_apk:capture('choose_apk','C:/Downloads/test.apk'),
+      install_application:capture('install_application','Success'),
       get_logs:capture('get_logs',[]), clear_logs:capture('clear_logs',true),
-      check_release:capture('check_release',{version:'2.5.1',notes:'视觉恢复验证'}),
+      check_release:capture('check_release',{version:'2.5.2',notes:'视觉恢复验证'}),
       install_official_adb:capture('install_official_adb','C:\\Android\\adb.exe'),
     }};
   });
@@ -79,7 +81,7 @@ try {
   assert.equal(await page.locator('button.nav-item').count(),6);
   const sidebarColor = await page.locator('.sidebar').evaluate(el=>getComputedStyle(el).backgroundColor);
   assert.equal(sidebarColor,'rgb(255, 255, 255)');
-  assert.equal((await page.locator('.sidebar-profile').innerText()).includes('2.5.1'),true);
+  assert.equal((await page.locator('.sidebar-profile').innerText()).includes('2.5.2'),true);
   console.log('PASS restored original shadcn-style sidebar and four dashboard cards');
 
   await page.locator('.sidebar-toggle').click();
@@ -115,10 +117,32 @@ try {
   assert(calls.some(c=>c.name==='configure_auth'&&c.args[2]==='a'));
   console.log('PASS styled first-install password choices and existing password management');
 
+  await page.locator('button.nav-item[title="应用管理"]').click();
+  await page.getByRole('heading',{name:'APK 安装器'}).waitFor();
+  await page.getByRole('textbox',{name:'APK 下载链接'}).fill('https://example.com/app.apk');
+  await page.getByRole('button',{name:'下载并安装'}).click();
+  await page.getByRole('dialog',{name:'确认安装 APK'}).getByRole('button',{name:'安装应用'}).click();
+  await page.waitForFunction(()=>window.__calls.some(c=>c.name==='install_application'&&c.args[2]===true));
+  await page.getByText('安装成功',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'本地 APK'}).click();
+  await page.getByRole('dialog',{name:'确认安装 APK'}).getByRole('button',{name:'安装应用'}).click();
+  await page.waitForFunction(()=>window.__calls.some(c=>c.name==='install_application'&&c.args[2]===false));
+  await page.getByText('安装成功',{exact:true}).waitFor();
+  console.log('PASS Windows APK link and local-file workflows');
+
   await page.locator('button.nav-item[title="设置"]').click();
   await page.getByRole('button',{name:/获取官方 ADB/}).waitFor();
+  await page.getByText('Vue 3 · Qt WebEngine',{exact:true}).waitFor();
   await page.locator('button.nav-item[title="工作台"]').click();
   assert.equal((await page.locator('.page-content h1').textContent()).trim(),'工作台');
+  for (const name of ['设备管理','应用管理','部署与更新','运行日志','设置','工作台']) {
+    await page.locator('button.nav-item[title="'+name+'"]').click();
+    assert.equal((await page.locator('.page-content h1').textContent()).trim(),name);
+    assert.equal(await page.locator('select').count(),0,'No unstyled native select');
+    assert(await page.locator('.page-content .panel, .stat-card').count()>0);
+  }
+  await page.waitForFunction(()=>document.querySelector('.brand-icon img')?.naturalWidth>0);
+  console.log('PASS all six pages, custom controls and brand logo');
   assert.deepEqual(errors,[],'No uncaught JS errors in restored Vue3 UI');
   console.log('RESTORED_VUE3_SHADCN_E2E_OK');
 } finally {

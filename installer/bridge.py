@@ -6,17 +6,16 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime
-import ipaddress
 import json
 import os
 from pathlib import Path
-import re
 import threading
 from typing import Any
 import webbrowser
 
-from adb_client import ADB, ADBError, locate_adb, validate_lan_endpoint, PKG_RE
+from adb_client import ADB, locate_adb, validate_lan_endpoint
 from version import APP_VERSION
+from apk import install_apk
 from deployment import (
     download_release,
     fetch_release,
@@ -127,7 +126,7 @@ class DesktopBridge:
     def list_apps(self, serial: str, system: bool = False) -> list[dict]:
         adb = self._ready(serial)
         packages = adb.packages(serial, system=system)
-        disabled = adb.disabled_packages(serial) if system else set()
+        disabled = adb.disabled_packages(serial)
         return [{"name": name, "system": bool(system), "disabled": name in disabled}
                 for name in packages]
 
@@ -212,6 +211,12 @@ class DesktopBridge:
     def uninstall(self, serial: str) -> str:
         return self._execute("卸载网页桌面 · " + serial,
                              lambda: uninstall_from_device(self._ready(serial), serial))
+
+    def install_application(self, serial: str, source: str, remote: bool) -> str:
+        if not isinstance(remote, bool) or not isinstance(source, str):
+            raise ValueError("APK 参数错误")
+        return self._execute("安装 APK", lambda: install_apk(
+            self._ready(serial), serial, source, remote, self.log))
 
     def uninstall_app(self, serial: str, package: str) -> str:
         return self._execute("卸载普通应用 · " + package,

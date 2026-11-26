@@ -43,6 +43,7 @@ type app struct {
 	updating   bool
 	metadata   metadataStore
 	auth       authState
+	apk        apkState
 }
 
 func randomBytes(n int) []byte {
@@ -179,6 +180,7 @@ func installedApps(ctx context.Context) []string {
 func (a *app) handler() http.Handler {
 	mux := http.NewServeMux()
 	staticAssets(mux)
+	a.apkRoutes(mux)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			fail(w, 405, "method not allowed")

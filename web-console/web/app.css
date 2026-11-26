@@ -53,3 +53,5 @@ h1{font-size:19px;font-weight:680;letter-spacing:-.4px;margin:0 0 3px}h2{font-si
 .auth-warning{padding:9px 10px;border-radius:8px;background:#fff6ed;color:#aa6326!important;font-size:11px!important}
 #authSave{margin:8px 0 0;padding:9px 12px;border:1px solid #dee4eb;border-radius:8px;background:#f7f9fb;color:#374558;cursor:pointer}
 #authSave:hover{background:#edf2f7}
+
+img.brand-mark{object-fit:contain;background:transparent;box-shadow:none;border:0} #apkFields[hidden],#apkFile[hidden]{display:none} #apkProgress{overflow-wrap:anywhere;margin-top:8px}

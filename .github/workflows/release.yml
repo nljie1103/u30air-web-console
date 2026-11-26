@@ -13,34 +13,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  preflight:
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: 停止已被合并替代的旧版构建
-        if: github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Only the known superseded v2.5.1 attempts, never unrelated runs.
-          for id in 45772139187 45772355035 45772919968; do
-            status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq .status)
-            if [[ "$status" != completed ]]; then
-              gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/cancel" || echo "Run $id already ended or cancellation unavailable"
-            fi
-          done
   windows:
-    needs: preflight
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: 预检版本、提交与统一图标
+        run: python installer/tests/check_release.py
       - name: PowerShell 5.1 ADB 脚本测试
         shell: powershell
         run: ./installer/tests/windows-adb-tests.ps1
@@ -140,7 +123,9 @@ jobs:
           set -euo pipefail
           VERSION=$(jq -r .version web-console/version.json)
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          git log -1 --format=%s | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+：.+$'
+          [[ "$(git log -1 --format=%s)" == "$VERSION"：* ]]
+          cmp installer/assets/app-icon.svg installer/frontend/public/app-icon.svg
+          cmp installer/assets/app-icon.svg web-console/web/app-icon.svg
           grep -Fq "APP_VERSION = \"$VERSION\"" installer/version.py
           node -e 'for (const dir of ["installer/frontend","web-console/tests"]) { const p=require("./"+dir+"/package.json"), l=require("./"+dir+"/package-lock.json"); if ([p.version,l.version,l.packages[""].version].some(v=>v!==process.argv[1])) throw Error("Version mismatch: "+dir); }' "$VERSION"
           test -s dist/windows/AndroidWebDesktopManager.exe
@@ -198,24 +183,17 @@ jobs:
           TAG="v$VERSION"
           REMOTE_TAG=$(git ls-remote origin "refs/tags/$TAG" | cut -f1)
           if [[ -n "$REMOTE_TAG" && "$REMOTE_TAG" != "$HEAD_SHA" ]]; then
-            # Repair only the unpublished-at-squash v2.5.1 attempts if one
-            # managed to create its tag before the cancellation took effect.
-            if [[ "$VERSION" == 2.5.1 ]] && [[ "$REMOTE_TAG" == bb77a411147be1b84fb56131dcfe5f4571bae9e3 || "$REMOTE_TAG" == 25330a95369df39877a281025d78af8875cb6b5e ]]; then
-              git push --force-with-lease="refs/tags/$TAG:$REMOTE_TAG" origin "$HEAD_SHA:refs/tags/$TAG"
-              if gh release view "$TAG" >/dev/null 2>&1; then
-                gh release upload "$TAG" dist/android-web-desktop-arm64.zip dist/windows/AndroidWebDesktopManager.exe dist/windows/AndroidWebDesktopManager-Portable.zip --clobber
-                gh release edit "$TAG" --title "$TAG｜$TITLE" --notes-file dist/notes.md
-                exit 0
-              fi
-            else
-              echo "Existing release tag points to another commit; refusing to change it" >&2
-              exit 1
-            fi
+            echo "Existing release tag points to another commit; refusing to change it" >&2
+            exit 1
           elif [[ -z "$REMOTE_TAG" ]]; then
             git tag "$TAG"
             git push origin "$TAG"
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.assets[] | select(.state=="uploaded") | .name' > dist/existing-assets.txt
+            for name in android-web-desktop-arm64.zip AndroidWebDesktopManager.exe AndroidWebDesktopManager-Portable.zip; do
+              grep -Fxq "$name" dist/existing-assets.txt || { echo "Existing release missing $name" >&2; exit 1; }
+            done
             echo "Release $TAG already exists at correct commit"
             exit 0
           fi
