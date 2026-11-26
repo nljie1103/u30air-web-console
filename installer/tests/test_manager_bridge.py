@@ -22,7 +22,7 @@ class TestDesktopBridge(unittest.TestCase):
 
     def test_version_and_config(self):
         env = self.bridge.environment()
-        self.assertEqual(env["version"], "2.4.1")
+        self.assertEqual(env["version"], "2.4.2")
         self.assertIn("adb_found", env)
         self.assertTrue(Path(self.bridge.settings_file).parent.is_dir())
 
@@ -34,6 +34,27 @@ class TestDesktopBridge(unittest.TestCase):
             with self.subTest(invalid=invalid):
                 with self.assertRaises((ValueError, TypeError)):
                     DesktopBridge._validate_ip(invalid)
+
+    def test_saved_device_ip_persists_only_for_active_interface(self):
+        self.bridge._remember_device_ip("serial-A", "192.168.0.1")
+        self.assertEqual(
+            self.bridge._load_settings()["device_web_ips"]["serial-A"],
+            "192.168.0.1",
+        )
+        class FakeDevice:
+            def __init__(self):
+                self.ips = ["192.168.0.1", "10.10.14.1"]
+            def device_info(self, serial):
+                return {"ips": self.ips, "model": "U30 Air"}
+        device = FakeDevice()
+        with patch.object(self.bridge, "_ready", return_value=device):
+            data = self.bridge.device_info("serial-A")
+            self.assertEqual(data["preferred_ip"], "192.168.0.1")
+            self.assertTrue(data["has_saved_ip"])
+            device.ips = ["10.10.14.1"]
+            data = self.bridge.device_info("serial-A")
+            self.assertEqual(data["preferred_ip"], "10.10.14.1")
+            self.assertFalse(data["has_saved_ip"])
 
     def test_missing_adb_fails_safely(self):
         self.bridge.adb_path = None

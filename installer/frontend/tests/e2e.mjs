@@ -68,7 +68,7 @@ try {
     };
     window.pywebview = {
       api: {
-        environment: track('environment', { version: '2.4.1', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
+        environment: track('environment', { version: '2.4.2', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
         list_devices: track('list_devices', [
           { serial: 'USB-TEST-001', state: 'device', detail: 'mock device' },
           { serial: '192.168.1.28:5555', state: 'offline', detail: 'unreachable' },
@@ -154,7 +154,7 @@ try {
     window.pywebview = { api: {} };
     setTimeout(() => {
       Object.assign(window.pywebview.api, {
-        environment: async () => ({ version: '2.4.1', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
+        environment: async () => ({ version: '2.4.2', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
         list_devices: async () => [{ serial: 'USB-DELAYED', state: 'device' }],
         get_logs: async () => [],
         device_info: async () => ({ brand: 'Google', model: 'Delayed Mock', android: '16', ips: [], installed_version: null }),
@@ -183,7 +183,7 @@ try {
     window.pywebview = { api: {
       environment: async () => {
         if (++calls === 1) throw new Error('temporary initialization error');
-        return { version: '2.4.1', adb_found: false, adb_path: '' };
+        return { version: '2.4.2', adb_found: false, adb_path: '' };
       },
       list_devices: async () => [],
       get_logs: async () => [],
@@ -202,7 +202,7 @@ try {
   const slowPage = await browser.newPage({ viewport: { width: 1300, height: 820 } });
   await slowPage.addInitScript(() => {
     window.pywebview = { api: {
-      environment: async () => ({ version: '2.4.1', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
+      environment: async () => ({ version: '2.4.2', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
       get_logs: async () => [],
       list_devices: async () => new Promise(resolve => setTimeout(() => resolve([{ serial: 'SLOW-ADB', state: 'device' }]), 2600)),
       device_info: async () => new Promise(resolve => setTimeout(() => resolve({ brand: 'Mock', model: 'Slow USB', android: '14', ips: [] }), 1200)),
@@ -227,7 +227,7 @@ try {
   const missingPage = await browser.newPage({ viewport: { width: 1300, height: 820 } });
   await missingPage.addInitScript(() => {
     window.pywebview = { api: {
-      environment: async () => ({ version: '2.4.1', adb_found: false, adb_path: '' }),
+      environment: async () => ({ version: '2.4.2', adb_found: false, adb_path: '' }),
       list_devices: async () => [], get_logs: async () => [],
     }};
   });
@@ -253,7 +253,7 @@ try {
     window.pywebview = { api: {
       environment: () => {
         if (++calls === 1) return new Promise(() => {});
-        return Promise.resolve({ version: '2.4.1', adb_found: false, adb_path: '' });
+        return Promise.resolve({ version: '2.4.2', adb_found: false, adb_path: '' });
       },
       list_devices: async () => [],
       get_logs: async () => [],
@@ -271,6 +271,43 @@ try {
   console.log('PASS hung first bridge call times out and retries without freezing UI');
   await hangingPage.close();
 
+  // Regression: cellular 10.x addresses must not be recommended for U30
+  // hotspot management. Expose the current old daemon binding separately.
+  const networkPage = await browser.newPage({ viewport: { width: 1350, height: 900 } });
+  const networkErrors = [];
+  networkPage.on('pageerror', e => networkErrors.push(e.message));
+  await networkPage.addInitScript(() => {
+    window.pywebview = { api: {
+      environment: async () => ({ version: '2.4.2', adb_found: true, adb_path: 'C:\\\\tools\\\\adb.exe' }),
+      list_devices: async () => [{ serial: 'U30-TEST', state: 'device' }],
+      device_info: async () => ({
+        brand: 'ZTE', model: 'U30 Air', android: '13',
+        installed_version: '2.4.2', ips: ['192.168.0.1', '10.10.14.1'],
+        preferred_ip: '192.168.0.1',
+        suggested_ip: '192.168.0.1',
+        listening_address: '10.129.230.33:8765',
+        network_addresses: [
+          { ip: '192.168.0.1', interface: 'br0', role: '热点/局域网' },
+          { ip: '10.10.14.1', interface: 'rndis0', role: 'USB 网络' },
+          { ip: '10.129.230.33', interface: 'rmnet_data0', role: '蜂窝/隧道' },
+        ],
+      }),
+      get_logs: async () => [],
+    }};
+  });
+  await networkPage.goto(url, { waitUntil: 'domcontentloaded' });
+  await networkPage.locator('.startup-notice').waitFor({ state: 'hidden', timeout: 7000 });
+  await networkPage.locator('button.nav-item[title="部署与更新"]').click();
+  assert.equal(await networkPage.locator('#ipField').inputValue(), '192.168.0.1');
+  const options = networkPage.locator('.network-option');
+  assert.equal(await options.count(), 2, 'Cellular IP must not be a deployment shortcut');
+  assert((await networkPage.locator('.network-warn').allInnerTexts()).some(x => x.includes('10.129.230.33')));
+  assert((await networkPage.locator('.page-content').innerText()).includes('当前运行服务监听'));
+  await options.filter({ hasText: '10.10.14.1' }).click();
+  assert.equal(await networkPage.locator('#ipField').inputValue(), '10.10.14.1');
+  assert.deepEqual(networkErrors, []);
+  console.log('PASS fixed hotspot gateway preference, cellular exclusion and listener migration warning');
+  await networkPage.close();
   console.log('BROWSER_E2E_OK');
 } finally {
   if (browser) await browser.close();

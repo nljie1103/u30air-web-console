@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 from zipfile import ZipFile
 import io
 
-from adb_client import ADB, ADBError, DATA_DIR, VERSION_RE
+from adb_client import ADB, ADBError, DATA_DIR, VERSION_RE, is_rfc1918
 
 
 REPOSITORY = "nljie1103/u30air-web-console"
@@ -167,13 +167,30 @@ def install_on_device(
     progress=lambda _: None,
 ) -> tuple[str, str]:
     parsed = ipaddress.ip_address(ip)
-    if (parsed.version != 4 or not parsed.is_private or parsed.is_link_local
-            or parsed.is_loopback or parsed.is_unspecified):
+    if (parsed.version != 4 or not is_rfc1918(str(parsed))):
         raise ValueError("访问 IP 必须是设备的私有局域网地址")
     if not 1024 <= port <= 65535:
         raise ValueError("不支持该网页端口")
     if adb.getprop(serial, "ro.product.cpu.abi") != "arm64-v8a":
         raise ADBError("设备不是 arm64-v8a，无法安装此程序")
+    # Do not replace an already-running instance with a listener bound to
+    # a stale carrier/USB IP. Check before stopping the previous version.
+    try:
+        from adb_client import parse_network_addresses
+        interfaces = parse_network_addresses(
+            adb.shell(serial, "ip", "-o", "-4", "addr", "show", timeout=9)
+        )
+    except ADBError:
+        interfaces = []
+    if interfaces and ip not in {entry["ip"] for entry in interfaces}:
+        raise ADBError(
+            f"设备当前没有配置 {ip}。请确认网关地址属于该设备的网络接口后再部署。"
+        )
+    if any(entry["ip"] == ip and entry["role"] == "蜂窝/隧道" for entry in interfaces):
+        raise ADBError(
+            f"{ip} 属于蜂窝数据或隧道接口，不适合当作固定网页管理地址；"
+            "请改用设备的 Wi-Fi 热点网关地址。"
+        )
 
     remote = DATA_DIR
     target = f"releases/{package.version}/desktopd"

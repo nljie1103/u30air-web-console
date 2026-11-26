@@ -124,7 +124,7 @@ def validate_lan_endpoint(value: str) -> str:
     if not match:
         raise ValueError("请输入局域网 IPv4 地址，例如 192.168.1.20:5555")
     ip = ipaddress.ip_address(match.group(1))
-    if not isinstance(ip, ipaddress.IPv4Address) or not ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
+    if not isinstance(ip, ipaddress.IPv4Address) or not is_rfc1918(str(ip)):
         raise ValueError("仅允许私有局域网 IPv4 地址")
     port = int(match.group(2) or 5555)
     if not 1 <= port <= 65535:
@@ -132,17 +132,76 @@ def validate_lan_endpoint(value: str) -> str:
     return f"{ip}:{port}"
 
 
-def parse_lan_ips(output: str) -> list[str]:
-    ips = []
-    for value in re.findall(r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3})/\d+", output):
-        try:
-            ip = ipaddress.ip_address(value)
-            if isinstance(ip, ipaddress.IPv4Address) and ip.is_private and not ip.is_link_local and not ip.is_loopback and not ip.is_unspecified:
-                if value not in ips:
-                    ips.append(value)
-        except ValueError:
+# Android devices expose several networks, including cellular interfaces with
+# RFC1918 addresses. Those are NOT LAN management addresses.
+CELLULAR_IFACE_PREFIXES = (
+    "rmnet", "ccmni", "pdp", "wwan", "cell", "radio", "clat", "v4-rmnet",
+    "tun", "tap", "wg", "ipsec", "vti", "ppp", "veth", "dummy",
+)
+HOTSPOT_IFACE_PREFIXES = ("ap", "softap", "swlan", "wlan", "br", "bridge", "eth")
+USB_IFACE_PREFIXES = ("rndis", "usb", "ncm")
+
+def is_rfc1918(address: str) -> bool:
+    try:
+        value = ipaddress.IPv4Address(address)
+    except ipaddress.AddressValueError:
+        return False
+    return any(value in ipaddress.ip_network(net) for net in (
+        "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"
+    ))
+
+def parse_network_addresses(output: str) -> list[dict[str, str]]:
+    """Return assigned IPv4 addresses ranked by management suitability.
+
+    Carrier PDP interfaces commonly have changing 10.x IPs and must not be
+    suggested as hotspot gateway addresses.
+    """
+    addresses: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for line in output.splitlines():
+        match = re.search(
+            r"^\s*\d+:\s+([^\s:]+)\s+inet\s+(\d{1,3}(?:\.\d{1,3}){3})/\d+",
+            line,
+        )
+        if not match:
             continue
-    return ips
+        iface, value = match.group(1).split("@", 1)[0].lower(), match.group(2)
+        if not is_rfc1918(value) or value in seen:
+            continue
+        seen.add(value)
+        if iface.startswith(CELLULAR_IFACE_PREFIXES):
+            role = "蜂窝/隧道"
+        elif iface.startswith(USB_IFACE_PREFIXES):
+            role = "USB 网络"
+        elif iface.startswith(HOTSPOT_IFACE_PREFIXES):
+            role = "热点/局域网"
+        else:
+            role = "其他网络"
+        addresses.append({"ip": value, "interface": iface, "role": role})
+
+    def ranking(entry: dict[str, str]) -> tuple[int, str]:
+        ip, role = entry["ip"], entry["role"]
+        if role == "蜂窝/隧道":
+            return (-1, ip)
+        last_octet = int(ip.split(".")[-1])
+        score = (400 if ip == "192.168.0.1" else
+                 220 if last_octet == 1 else 0)
+        if role == "热点/局域网":
+            score += 100
+        elif role == "USB 网络":
+            score += 40
+        if ip.startswith("192.168."):
+            score += 70
+        return (score, ip)
+
+    return sorted(addresses, key=ranking, reverse=True)
+
+def parse_lan_ips(output: str) -> list[str]:
+    """Only LAN-side interfaces are suitable for user HTTP endpoints."""
+    return [
+        entry["ip"] for entry in parse_network_addresses(output)
+        if entry["role"] != "蜂窝/隧道"
+    ]
 
 
 class ADB:
@@ -193,33 +252,57 @@ class ADB:
             mapping = dict(lines)
             return {name: mapping.get(key, "未知") for name, key in props.items()}
 
-        def network_request() -> list[str]:
-            return parse_lan_ips(self.shell(serial, "ip", "-o", "-4", "addr", "show", timeout=9))
+        def network_request() -> list[dict[str, str]]:
+            return parse_network_addresses(
+                self.shell(serial, "ip", "-o", "-4", "addr", "show", timeout=9)
+            )
 
         def version_request() -> str:
             return self.shell(serial, "readlink", DATA_DIR + "/current", timeout=8).strip()
 
+        def listener_request() -> str:
+            """Read current daemon binding, not merely the first device IP."""
+            pid = self.shell(serial, "cat", DATA_DIR + "/server.pid", timeout=5).strip()
+            if not pid.isdecimal() or not 1 < int(pid) < 2**22:
+                return ""
+            command = self.shell(serial, "cat", f"/proc/{pid}/cmdline", timeout=5)
+            if DATA_DIR not in command:
+                return ""
+            match = re.search(
+                r"(?:^|\x00)-listen(?:\x00|=)"
+                r"((?:\d{1,3}\.){3}\d{1,3}:\d{1,5})(?:\x00|$)",
+                command,
+            )
+            return match.group(1) if match else ""
+
         # Connections may be slower than the desktop UI, but Python bridge
         # invocation happens off the UI thread and these calls can overlap.
         values = {"adb_serial": serial}
-        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="ADBInfo") as pool:
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="ADBInfo") as pool:
             futures = {
                 "props": pool.submit(props_request),
-                "ips": pool.submit(network_request),
+                "network": pool.submit(network_request),
                 "version": pool.submit(version_request),
+                "listener": pool.submit(listener_request),
             }
             for key, future in futures.items():
                 try:
                     value = future.result()
                 except (ADBError, OSError, ValueError):
-                    value = {"props": {k: "未知" for k in props}, "ips": [], "version": ""}[key]
+                    value = {"props": {k: "未知" for k in props}, "network": [], "version": "", "listener": ""}[key]
                 if key == "props":
                     values.update(value)
-                elif key == "ips":
-                    values["ips"] = value
-                else:
+                elif key == "network":
+                    values["network_addresses"] = value
+                    values["ips"] = [
+                        entry["ip"] for entry in value if entry["role"] != "蜂窝/隧道"
+                    ]
+                    values["suggested_ip"] = values["ips"][0] if values["ips"] else ""
+                elif key == "version":
                     match = VERSION_RE.fullmatch(value)
                     values["installed_version"] = match.group(1) if match else None
+                elif key == "listener":
+                    values["listening_address"] = value
         values["install_status"] = "已安装" if values["installed_version"] else "未安装"
         return values
 

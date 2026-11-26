@@ -332,3 +332,12 @@ h1 { font-size: 26px; line-height: 1.18; letter-spacing: -.9px; color: #1d2737; 
 .startup-notice span { flex: 1; }
 .startup-notice button { border: 0; background: transparent; color: #426d9c; font-weight: 700; padding: 4px 6px; }
 .startup-notice button:hover { text-decoration: underline; }
+
+
+/* Distinguish stable device-side LAN gateway addresses from cellular PDP IPs. */
+.network-options{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+.network-options>span{width:100%;font-size:11px;color:#8895a7}
+.network-option{display:inline-flex;gap:6px;align-items:center;padding:8px 10px;border:1px solid #dee5ef;border-radius:9px;background:#fff;color:#385577;font-size:12px;cursor:pointer}
+.network-option small{font-size:10px;color:#8693a3}
+.network-option.active{border-color:#7aa3d7;background:#edf5ff}
+.network-warn{color:#bf683a!important;display:inline-flex;align-items:center;gap:5px}

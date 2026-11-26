@@ -33,6 +33,10 @@ class SimulatedWirelessADB(ADB):
             return "2: wlan0 inet 192.168.0.1/24"
         if args[0] == "readlink":
             return "releases/2.2.2/desktopd"
+        if args[0] == "cat" and args[1].endswith("/server.pid"):
+            return "1234"
+        if args[0] == "cat" and args[1] == "/proc/1234/cmdline":
+            return "/data/local/tmp/android-web-desktop/current\x00-listen\x00192.168.0.1:8765\x00"
         raise AssertionError(args)
 
 
@@ -46,8 +50,9 @@ class TestDeviceInfoPerformance(unittest.TestCase):
         self.assertEqual(result["android"], "16")
         self.assertEqual(result["ips"], ["192.168.0.1"])
         self.assertEqual(result["installed_version"], "2.2.2")
-        self.assertEqual(len(device.commands), 3, "device_info must not spawn per-property adb processes")
-        # Sequential calls would consume 0.3 s. Allow CI scheduling slack.
+        self.assertEqual(result["listening_address"], "192.168.0.1:8765")
+        self.assertEqual(len(device.commands), 5, "device_info must not spawn per-property adb processes")
+        # Listener detail adds two dependent calls in one parallel task.
         self.assertLess(elapsed, 0.5)
 
     def test_failure_of_one_component_preserves_other_details(self):

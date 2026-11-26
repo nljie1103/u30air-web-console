@@ -37,7 +37,7 @@ class DesktopBridge:
         self.settings = self._load_settings()
         saved = self.settings.get("adb_path", "")
         self.adb_path = Path(saved) if saved and Path(saved).is_file() else locate_adb()
-        self.version = "2.4.1"
+        self.version = "2.4.2"
 
     def _load_settings(self) -> dict:
         try:
@@ -103,7 +103,25 @@ class DesktopBridge:
                 for d in adb.devices()]
 
     def device_info(self, serial: str) -> dict:
-        return self._ready(serial).device_info(serial)
+        info = self._ready(serial).device_info(serial)
+        # An address selected during a successful deployment belongs to that
+        # device; never use a stale saved address if its interface disappeared.
+        stored = self.settings.get("device_web_ips", {})
+        saved = stored.get(serial, "") if isinstance(stored, dict) else ""
+        available = info.get("ips", [])
+        info["preferred_ip"] = saved if saved in available else (available[0] if available else "")
+        info["has_saved_ip"] = saved in available and bool(saved)
+        return info
+
+    def _remember_device_ip(self, serial: str, ip: str) -> None:
+        with self._lock:
+            stored = self.settings.get("device_web_ips", {})
+            if not isinstance(stored, dict):
+                stored = {}
+            stored = {k: v for k, v in stored.items() if isinstance(k, str) and isinstance(v, str)}
+            stored[serial] = ip
+            self.settings["device_web_ips"] = stored
+            self._save_settings()
 
     def list_apps(self, serial: str, system: bool = False) -> list[dict]:
         adb = self._ready(serial)
@@ -183,6 +201,7 @@ class DesktopBridge:
                 adb, serial, package, self._validate_ip(ip),
                 progress=lambda msg: self.log(msg),
             )
+            self._remember_device_ip(serial, self._validate_ip(ip))
             return {"url": url, "password": password, "version": package.version}
         return self._execute("安装最新版 · " + serial, operation)
 
@@ -197,6 +216,7 @@ class DesktopBridge:
                 adb, serial, package, self._validate_ip(ip),
                 progress=lambda msg: self.log(msg),
             )
+            self._remember_device_ip(serial, self._validate_ip(ip))
             return {"url": url, "password": password, "version": package.version}
         return self._execute("安装本地版本 · " + serial, operation)
 

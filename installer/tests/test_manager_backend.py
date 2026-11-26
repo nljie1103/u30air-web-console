@@ -27,7 +27,7 @@ USB09 unauthorized usb:1-3
     def test_private_endpoint(self):
         self.assertEqual(adb_client.validate_lan_endpoint("192.168.0.4"), "192.168.0.4:5555")
         self.assertEqual(adb_client.validate_lan_endpoint("10.1.2.3:37099"), "10.1.2.3:37099")
-        for value in ["8.8.8.8", "127.0.0.1", "169.254.8.8", "999.0.0.1", "192.168.1.3:70000", "192.168.1.3;reboot"]:
+        for value in ["8.8.8.8", "127.0.0.1", "169.254.8.8", "999.0.0.1", "198.18.0.1", "192.168.1.3:70000", "192.168.1.3;reboot"]:
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     adb_client.validate_lan_endpoint(value)
@@ -38,6 +38,29 @@ USB09 unauthorized usb:1-3
 4: lo inet 127.0.0.1/8
 5: random inet 169.254.1.1/32""")
         self.assertEqual(ips, ["192.168.0.1", "10.20.1.33"])
+
+    def test_hotspot_gateway_is_prioritized_over_cellular_and_usb(self):
+        raw = """8: rmnet_data0    inet 10.129.230.33/30 scope global rmnet_data0
+9: rndis0    inet 10.10.14.1/24 scope global rndis0
+10: br0    inet 192.168.0.1/24 scope global br0
+1: lo    inet 127.0.0.1/8 scope host lo"""
+        info = adb_client.parse_network_addresses(raw)
+        self.assertEqual([v["ip"] for v in info],
+                         ["192.168.0.1", "10.10.14.1", "10.129.230.33"])
+        self.assertEqual(info[-1]["role"], "蜂窝/隧道")
+        self.assertEqual(adb_client.parse_lan_ips(raw),
+                         ["192.168.0.1", "10.10.14.1"])
+
+    def test_mobile_private_ip_must_not_be_treated_as_hotspot(self):
+        raw = """3: rmnet_data2 inet 10.129.230.33/30 scope global
+4: ccmni0 inet 10.25.44.17/29 scope global
+5: tun0 inet 10.0.5.2/24 scope global"""
+        self.assertEqual(adb_client.parse_lan_ips(raw), [])
+        self.assertEqual(len(adb_client.parse_network_addresses(raw)), 3)
+
+    def test_private_ip_not_automatically_public_lan(self):
+        raw = "2: wlan0 inet 198.18.0.1/16 scope global"
+        self.assertEqual(adb_client.parse_lan_ips(raw), [])
 
     def test_package_guard(self):
         self.assertTrue(adb_client.PKG_RE.fullmatch("com.example.app"))
@@ -94,6 +117,25 @@ def package_zip(version="2.1.0", binary=None):
 
 
 class TestDeployment(unittest.TestCase):
+    def test_deployment_rejects_unassigned_and_cellular_addresses_before_install(self):
+        class NetworkADB(FakeADB):
+            def shell(self, serial, *args, timeout=20):
+                if args[:4] == ("ip", "-o", "-4", "addr"):
+                    return """9: rmnet_data0 inet 10.129.230.33/30
+10: br0 inet 192.168.0.1/24"""
+                return super().shell(serial, *args, timeout=timeout)
+        fake = NetworkADB()
+        pack = deployment.parse_package(package_zip())
+        for ip, message in (
+            ("10.129.230.33", "蜂窝"),
+            ("192.168.0.99", "没有配置"),
+        ):
+            with self.subTest(ip=ip):
+                with self.assertRaisesRegex(adb_client.ADBError, message):
+                    deployment.install_on_device(fake, "usb-1", pack, ip)
+        self.assertFalse(any("push" in c for c in fake.commands),
+                         "An invalid address must not interrupt or stage deployment")
+
     def test_parse_package(self):
         package = deployment.parse_package(package_zip())
         self.assertEqual(package.version, "2.1.0")

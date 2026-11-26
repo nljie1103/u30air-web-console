@@ -16,6 +16,9 @@ type InfoData = {
   adb_serial?: string; manufacturer?: string; brand?: string; model?: string
   android?: string; sdk?: string; abi?: string; build?: string
   installed_version?: string | null; ips?: string[]
+  preferred_ip?: string; suggested_ip?: string; has_saved_ip?: boolean
+  listening_address?: string
+  network_addresses?: { ip: string; interface: string; role: string }[]
 }
 type AndroidApp = { name: string; system: boolean; disabled: boolean }
 type Entry = { time: string; level: string; message: string }
@@ -52,7 +55,7 @@ const appSearch = ref('')
 const showSystem = ref(false)
 const activeOnly = ref<'all' | 'enabled' | 'disabled'>('all')
 const adbPath = ref('')
-const envVersion = ref('2.4.1')
+const envVersion = ref('2.4.2')
 const loading = ref('')
 const scanning = ref(false)
 const deviceLoading = ref(false)
@@ -93,7 +96,14 @@ const filteredApps = computed(() => {
       (activeOnly.value === 'disabled' && a.disabled)),
   )
 })
-const preferredIp = computed(() => targetIp.value || info.value.ips?.[0] || '')
+const preferredIp = computed(() => targetIp.value || info.value.preferred_ip || info.value.ips?.[0] || '')
+const safeNetworkAddresses = computed(() => (info.value.network_addresses || [])
+  .filter(a => a.role !== '蜂窝/隧道'))
+const cellularAddresses = computed(() => (info.value.network_addresses || [])
+  .filter(a => a.role === '蜂窝/隧道'))
+const currentListenerIP = computed(() => info.value.listening_address?.split(':')[0] || '')
+const needsRebind = computed(() => installed.value && Boolean(currentListenerIP.value) &&
+  Boolean(preferredIp.value) && currentListenerIP.value !== preferredIp.value)
 const bodyTitle = computed(() => ({
   overview: '工作台', devices: '设备管理', applications: '应用管理', deployment: '部署与更新',
   logs: '运行日志', settings: '设置',
@@ -169,12 +179,6 @@ async function refreshDevicesQuietly() {
       if (!found.some(d => d.serial === selected.value && d.state === 'device')) {
         ++infoGeneration
         deviceLoading.value = false
-        ++infoGeneration
-        deviceLoading.value = false
-        ++infoGeneration
-        deviceLoading.value = false
-        ++infoGeneration
-        deviceLoading.value = false
         selected.value = ''
         info.value = {}
         applications.value = []
@@ -238,7 +242,7 @@ async function loadDevice(serial: string) {
     const data = await invoke<InfoData>('device_info', serial)
     if (selected.value !== serial || request !== infoGeneration) return
     info.value = data
-    targetIp.value = data.ips?.[0] || ''
+    targetIp.value = data.preferred_ip || data.ips?.[0] || ''
     if (current.value === 'applications') void loadApps()
   } catch (cause: any) {
     if (request === infoGeneration) {
@@ -321,7 +325,7 @@ async function reloadInfo() {
   if (!requireDevice()) return
   await work('同步设备状态…', async () => await invoke<InfoData>('device_info', selected.value), result => {
     info.value = result
-    targetIp.value = result.ips?.[0] || ''
+    targetIp.value = result.preferred_ip || result.ips?.[0] || ''
     showToast('设备信息已更新')
   })
 }
@@ -356,6 +360,7 @@ async function deploy(mode: 'online' | 'offline') {
 async function onInstalled(result: ResultInstall) {
   pendingInstall.value = result
   info.value.installed_version = result.version
+  info.value.listening_address = new URL(result.url).host
   showToast('网页桌面 v' + result.version + ' 已安装')
 }
 function uninstall() {
@@ -409,6 +414,11 @@ function requestPower(operation: 'reboot' | 'poweroff') {
 }
 async function openWeb() {
   if (!requireDevice()) return
+  if (needsRebind.value) {
+    current.value = 'deployment'
+    showToast('当前服务仍绑定旧地址，请在部署页使用推荐网关重新安装或升级', 'info')
+    return
+  }
   if (!preferredIp.value) { showToast('没有可访问的设备 IP 地址', 'error'); return }
   await work('正在打开网页控制台…', () => invoke<string>('open_web', preferredIp.value, 8765), url => showToast('正在打开 ' + url))
 }
@@ -435,7 +445,7 @@ async function copyText(value: string) {
 }
 function previewSetup() {
   ready.value = true
-  envVersion.value = '2.4.1'
+  envVersion.value = '2.4.2'
   adbPath.value = 'C:\\Android\\platform-tools\\adb.exe'
   devices.value = [{ serial: 'ZY22FQ7A9H', state: 'device', detail: 'usb:1-4 product:demo model:Pixel' },{ serial: '192.168.1.28:5555', state: 'offline' }]
   selected.value = 'ZY22FQ7A9H'
@@ -696,9 +706,9 @@ watch(showSystem, () => {
             </div>
             <div class="stat-card">
               <div class="stat-icon green"><Wifi :size="19" /></div>
-              <div class="stat-heading">局域网地址 <Activity :size="15" /></div>
+              <div class="stat-heading">推荐管理地址 <Activity :size="15" /></div>
               <div class="stat-value stat-truncate">{{ preferredIp || '—' }}</div>
-              <div class="stat-footer">{{ preferredIp ? '设备 IPv4 地址' : '等待设备网络信息' }}</div>
+              <div class="stat-footer">{{ preferredIp ? '设备热点/局域网地址' : '未识别到局域网接口' }}</div>
             </div>
           </section>
 
@@ -837,7 +847,25 @@ watch(showSystem, () => {
               <div class="deploy-banner"><div class="deploy-banner-icon"><Monitor :size="30" /></div><div><strong>Android Web Desktop</strong><p>通过设备局域网浏览器查看和操作 Android 桌面。</p></div></div>
               <label class="field-label" for="ipField">设备监听地址</label>
               <div class="input-with-icon"><Wifi :size="17" /><input id="ipField" v-model="targetIp" placeholder="例如 192.168.1.28" /></div>
-              <p class="field-help">需填写目标设备的私有局域网 IPv4，默认网页端口为 8765。</p>
+              <p class="field-help">优先使用设备自身的热点管理网关（如中兴 U30 Air 的 192.168.0.1），端口固定为 8765。不要使用蜂窝数据的动态 10.x 地址。</p>
+              <div v-if="safeNetworkAddresses.length" class="network-options">
+                <span>设备已分配的局域网地址</span>
+                <button v-for="entry in safeNetworkAddresses" :key="entry.interface + entry.ip" type="button"
+                  class="network-option" :class="{ active: preferredIp === entry.ip }"
+                  @click="targetIp = entry.ip">
+                  <Wifi :size="14" />{{ entry.ip }} <small>{{ entry.interface }} · {{ entry.role }}</small>
+                </button>
+              </div>
+              <p v-if="cellularAddresses.length" class="field-help network-warn">
+                <Info :size="14" />已排除蜂窝/隧道 IP：{{ cellularAddresses.map(a => a.ip + ' (' + a.interface + ')').join('、') }}
+              </p>
+              <p v-if="info.listening_address" class="field-help">
+                当前运行服务监听：<strong>{{ info.listening_address }}</strong>
+                <span v-if="needsRebind" class="network-warn"> · 与推荐地址不同，需重新部署才能迁移到 {{ preferredIp }}:8765。</span>
+              </p>
+              <p v-if="!safeNetworkAddresses.length && selectedReady" class="field-help network-warn">
+                未检测到设备的热点接口，请确认官方管理网关实际属于本设备，必要时手动填写。
+              </p>
               <div class="deploy-buttons">
                 <button class="btn btn-primary" :disabled="!selectedReady || !!loading" @click="deploy('online')"><CloudDownload :size="17" />从 GitHub 安装最新版</button>
                 <button class="btn btn-outline" :disabled="!selectedReady || !!loading" @click="deploy('offline')"><FileArchive :size="17" />安装本地 ZIP</button>
