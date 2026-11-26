@@ -68,7 +68,7 @@ try {
     };
     window.pywebview = {
       api: {
-        environment: track('environment', { version: '2.3.1', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
+        environment: track('environment', { version: '2.3.2', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
         list_devices: track('list_devices', [
           { serial: 'USB-TEST-001', state: 'device', detail: 'mock device' },
           { serial: '192.168.1.28:5555', state: 'offline', detail: 'unreachable' },
@@ -154,7 +154,7 @@ try {
     window.pywebview = { api: {} };
     setTimeout(() => {
       Object.assign(window.pywebview.api, {
-        environment: async () => ({ version: '2.3.1', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
+        environment: async () => ({ version: '2.3.2', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
         list_devices: async () => [{ serial: 'USB-DELAYED', state: 'device' }],
         get_logs: async () => [],
         device_info: async () => ({ brand: 'Google', model: 'Delayed Mock', android: '16', ips: [], installed_version: null }),
@@ -183,7 +183,7 @@ try {
     window.pywebview = { api: {
       environment: async () => {
         if (++calls === 1) throw new Error('temporary initialization error');
-        return { version: '2.3.1', adb_found: false, adb_path: '' };
+        return { version: '2.3.2', adb_found: false, adb_path: '' };
       },
       list_devices: async () => [],
       get_logs: async () => [],
@@ -202,7 +202,7 @@ try {
   const slowPage = await browser.newPage({ viewport: { width: 1300, height: 820 } });
   await slowPage.addInitScript(() => {
     window.pywebview = { api: {
-      environment: async () => ({ version: '2.3.1', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
+      environment: async () => ({ version: '2.3.2', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
       get_logs: async () => [],
       list_devices: async () => new Promise(resolve => setTimeout(() => resolve([{ serial: 'SLOW-ADB', state: 'device' }]), 2600)),
       device_info: async () => new Promise(resolve => setTimeout(() => resolve({ brand: 'Mock', model: 'Slow USB', android: '14', ips: [] }), 1200)),
@@ -227,7 +227,7 @@ try {
   const missingPage = await browser.newPage({ viewport: { width: 1300, height: 820 } });
   await missingPage.addInitScript(() => {
     window.pywebview = { api: {
-      environment: async () => ({ version: '2.3.1', adb_found: false, adb_path: '' }),
+      environment: async () => ({ version: '2.3.2', adb_found: false, adb_path: '' }),
       list_devices: async () => [], get_logs: async () => [],
     }};
   });
@@ -253,7 +253,7 @@ try {
     window.pywebview = { api: {
       environment: () => {
         if (++calls === 1) return new Promise(() => {});
-        return Promise.resolve({ version: '2.3.1', adb_found: false, adb_path: '' });
+        return Promise.resolve({ version: '2.3.2', adb_found: false, adb_path: '' });
       },
       list_devices: async () => [],
       get_logs: async () => [],

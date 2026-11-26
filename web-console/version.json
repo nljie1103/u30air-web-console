@@ -1,5 +1,5 @@
 {
-  "version": "2.3.1",
-  "title": "修复了Windows管理器首次启动报错与界面卡顿",
-  "notes": "### Windows 管理器修复\n- 修复首次启动时 WebView2 的 Python API 对象已存在、方法尚未注入导致 TypeError: … is not a function 的问题。\n- 接口未准备好时显示友好的初始化状态；不会再把瞬时注入失败作为首页红色致命错误。\n- 启动握手设定 5 秒超时并自动重试，避免第一次接口调用不返回时界面一直处于等待状态。\n- Android 设备扫描、设备属性读取与首页初始化解耦；后台扫描期间仍可切换侧边栏页面。\n- 设备重新连接或快速切换时忽略过期请求，防止旧设备信息覆盖当前选择。\n\n### 回归测试\n- 新增 API 方法延迟注入、首次调用失败、调用永不返回及 API 方法缺失等浏览器自动测试。\n- 测试在慢速 ADB 扫描期间连续切换多个侧边栏页面，验证操作响应及错误提示。\n- Windows 便携版和单文件 EXE 均保留，统一通过 Edge/Vue 交互及 Windows 构建检查。"
+  "version": "2.3.2",
+  "title": "修复了Windows便携版.NET运行时启动失败",
+  "notes": "### Windows 便携版修复\n- 修复了部分 Windows 10/11 通过资源管理器解压 GitHub ZIP 后，便携版 EXE 提示 Python.Runtime.Loader.Initialize 加载失败的问题。\n- 随包提供 EXE 专用 .NET Framework 配置，支持加载便携包中被 Windows 标记为 Internet 来源的托管程序集；不修改机器的全局设置。\n- Windows CI 新增安全标记测试：对解压后的 Python.Runtime.dll 和 ClrLoader.dll 添加 Zone.Identifier，再实际启动 WebView2。\n- 独立单文件 EXE 保持原有打包方式和功能。\n\n### 使用说明\n- 下载便携 ZIP 后完整解压，EXE、同名 .config 和 _internal 文件夹须放在同一目录。\n- 请仅从项目官方 GitHub Releases 下载软件。"
 }

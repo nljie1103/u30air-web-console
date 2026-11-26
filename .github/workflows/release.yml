@@ -52,6 +52,8 @@ jobs:
           $sw.Stop()
           if ($portable.ExitCode -ne 0) { throw "Portable build self-test failed" }
           Write-Host ("Portable EXE self-test duration: {0} ms" -f $sw.ElapsedMilliseconds)
+          # Apply a per-executable CLR load policy for the packaged portable DLLs.
+          Copy-Item -LiteralPath "installer/AndroidWebDesktopManager.exe.config" -Destination "dist/AndroidWebDesktopManager/AndroidWebDesktopManager.exe.config"
           Compress-Archive -Path "dist/AndroidWebDesktopManager" -DestinationPath "dist/AndroidWebDesktopManager-Portable.zip" -CompressionLevel Optimal -Force
           if (!(Test-Path "dist/AndroidWebDesktopManager-Portable.zip")) { throw "Portable ZIP missing" }
 
@@ -74,6 +76,9 @@ jobs:
             if (!$gui.HasExited) { Stop-Process -Id $gui.Id -Force -ErrorAction SilentlyContinue }
           }
           Write-Host "Portable WebView2 GUI smoke passed"
+      - name: 便携版Internet安全标记下的WebView2启动验收
+        shell: pwsh
+        run: ./installer/tests/windows-portable-tests.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: windows-manager
@@ -107,6 +112,7 @@ jobs:
           node -e "const p=require('./installer/frontend/package.json'); if(p.version!==process.argv[1]) process.exit(1)" "$VERSION"
           test -s dist/windows/AndroidWebDesktopManager.exe
           test -s dist/windows/AndroidWebDesktopManager-Portable.zip
+          unzip -p dist/windows/AndroidWebDesktopManager-Portable.zip AndroidWebDesktopManager/AndroidWebDesktopManager.exe.config | grep -Fq 'loadFromRemoteSources enabled="true"'
           test -f installer/adb_client.py
           test -f web-console/main.go
           (cd web-console && go test ./... && go vet ./...)
