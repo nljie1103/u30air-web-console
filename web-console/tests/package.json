@@ -1,1 +1,9 @@
-{"name":"android-web-desktop-web-tests","private":true,"version":"2.5.0","type":"module","devDependencies":{"playwright-core":"1.56.1"}}
+{
+  "name": "android-web-desktop-web-tests",
+  "private": true,
+  "version": "2.5.1",
+  "type": "module",
+  "devDependencies": {
+    "playwright-core": "1.56.1"
+  }
+}

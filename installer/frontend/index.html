@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#f8fafc" />
+    <title>Android Web Desktop · 设备管理器</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <!-- Only Qt's embedded WebEngine provides this transport. In standard
+         browser preview/tests the existing mock window.pywebview remains. -->
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script>
+    (function() {
+      if (!window.qt || !qt.webChannelTransport || !window.QWebChannel) return;
+      const methods = [
+        'environment','list_devices','device_info','list_apps','get_logs',
+        'clear_logs','connect','set_adb_path','choose_adb','choose_local_zip',
+        'install_official_adb','check_release','install_latest','install_local',
+        'read_auth','configure_auth','uninstall','uninstall_app','set_system_app',
+        'reboot','poweroff','open_web'
+      ];
+      const pending = new Map();
+      let counter = 0;
+      new QWebChannel(qt.webChannelTransport, channel => {
+        const backend = channel.objects.nativeBridge;
+        backend.completed.connect((id, payload) => {
+          const request = pending.get(id);
+          if (!request) return;
+          pending.delete(id);
+          try {
+            const response = JSON.parse(payload);
+            if (response.ok) request.resolve(response.result);
+            else request.reject(new Error(response.error || 'Windows 管理操作失败'));
+          } catch (error) { request.reject(error); }
+        });
+        const api = {};
+        for (const name of methods) {
+          api[name] = (...args) => new Promise((resolve, reject) => {
+            const id = String(++counter);
+            pending.set(id, { resolve, reject });
+            // WebChannel's void Qt slot still sends an acknowledgement.
+            // Supply its optional callback so Qt does not log an unknown RPC id.
+            try { backend.request(id, name, JSON.stringify(args), function() {}); }
+            catch (error) { pending.delete(id); reject(error); }
+          });
+        }
+        window.pywebview = { api };
+        window.dispatchEvent(new Event('pywebviewready'));
+      });
+    })();
+    </script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

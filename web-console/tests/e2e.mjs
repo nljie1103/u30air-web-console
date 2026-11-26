@@ -37,7 +37,7 @@ const server = createServer(async (req, res) => {
   if (path.pathname === '/assets/app.css') return respond(200, readFileSync(join(root, 'app.css')), 'text/css');
   if (path.pathname === '/assets/app.js') return respond(200, readFileSync(join(root, 'app.js')), 'text/javascript');
   if (path.pathname === '/') return respond(200, readFileSync(join(root, 'index.html')), 'text/html');
-  if (path.pathname === '/api/status') return respond(200, { version: '2.5.0', manufacturer: 'ZTE', model: 'U30 Air', android: '13', abi: 'arm64-v8a' });
+  if (path.pathname === '/api/status') return respond(200, { version: '2.5.1', manufacturer: 'ZTE', model: 'U30 Air', android: '13', abi: 'arm64-v8a' });
   if (path.pathname === '/api/metrics') return respond(200, {
     cpuPercent: 28.5, cpuCores: 8,
     memoryTotal: 4294967296, memoryUsed: 2147483648,

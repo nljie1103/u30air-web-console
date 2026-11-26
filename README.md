@@ -4,9 +4,9 @@
 
 # Android Web Desktop
 
-**Qt 6 Windows 设备管理器 + Android ARM64 网页控制台**
+**经典 Vue 3 / shadcn 风格 · Qt 6 Windows 客户端 · Android ARM64 网页控制台**
 
-在 Windows 上通过原生图形界面发现、安装和维护 Android 设备的网页远程控制服务。
+恢复 v2.4.x 深受用户认可的浅色卡片、Lucide 图标及可折叠侧边栏，支持从 Windows 发现、安装和维护 Android 设备的网页远程控制服务。
 
 [![Latest Release](https://img.shields.io/github/v/release/nljie1103/u30air-web-console?style=for-the-badge)](https://github.com/nljie1103/u30air-web-console/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/nljie1103/u30air-web-console/release.yml?branch=main&style=for-the-badge)](https://github.com/nljie1103/u30air-web-console/actions)
@@ -22,16 +22,16 @@
 
 本项目由两个相互独立的组件组成。
 
-- **Windows 管理器**：采用 **Qt 6 / PySide6 的原生 Widgets** 编写，不使用 Edge、Chrome、WebView2，也不需要用户安装 Python 或 Qt。负责通过 ADB 搜索设备、查看信息、安装和更新网页服务、管理应用、修改网页登录设置及查看运行日志。
+- **Windows 管理器**：Qt 6 / PySide6 桌面窗口中嵌入 **QtWebEngine 渲染的原版 Vue 3 / shadcn-inspired 界面**。UI 使用 Lucide 图标、浅色卡片和可折叠侧边栏；Python 后端负责 ADB、设备信息、软件管理、下载和更新。用户无需安装 Edge 或 Python/Qt 环境，也无需单独运行本机 127.0.0.1 网页服务器。
 - **Android 网页控制台**：用 Go 编译为 Android ARM64 原生程序，在设备的局域网 IP 上提供 HTTP 服务（默认端口 **8765**）。支持浏览器查看和点击屏幕、上下左右滑动、应用管理、设备状态、唤醒/熄屏、重启/关机及自助在线更新。
 
-Windows 管理器为当前唯一图形客户端打包目标；Android 设备端继续支持通过安装脚本从 Linux/macOS 使用 ADB 安装。Windows 管理器本身不是网页程序，但 **8765 远程控制台仍然需要浏览器访问**。
+Windows 管理器目前仅打包 Windows 版本；Android 设备端可由 Linux/macOS 上已有的 ADB 安装。**需要明确：Qt 6 Windows 客户端内嵌 QtWebEngine（Chromium 渲染内核），不是纯 Qt Widgets；只是无需调用系统外部 Edge 浏览器。** 这能保留原版 Vue 3 的视觉和交互，但安装包比纯 Widgets 更大。设备的 **8765 远程控制台**仍通过普通手机/电脑浏览器访问。
 
 ## 主要功能
 
 | 组件 | 功能 |
 |---|---|
-| 原生 Windows 窗口 | Qt 6 卡片式界面、可折叠侧边栏、六个管理页面、软件图标 |
+| Windows 图形界面 | Qt 6 桌面窗口 + 原版 Vue 3/shadcn 风格，Lucide 图标、精致卡片、可折叠侧边栏和六个页面 |
 | 开箱即用 ADB | 自动检测本机 ADB；未找到时提供一键下载安装 Google 官方 Windows Platform-Tools |
 | 设备管理 | USB / 无线 ADB 连接、品牌型号、Android 版本、CPU 架构、系统构建、监听地址 |
 | 网关识别 | 优先热点/局域网接口，过滤常见蜂窝数据动态 IP，避免把服务绑定到不稳定的地址 |
@@ -136,11 +136,15 @@ android-web-desktop/
 ├── .github/workflows/release.yml    # 仅 Windows Qt GUI + Android ARM64 的 CI/Release
 ├── installer/                     # Windows Qt6 原生客户端源码
 │   ├── app.py                     # Qt 启动入口
-│   ├── qt_window.py               # 原生控件、六页面与异步 ADB 任务
+│   ├── qt_window.py               # QtWebEngine 容器、受限本地资源协议和异步 ADB 桥接
 │   ├── version.py                 # 唯一 Windows 客户端版本常量
 │   ├── bridge.py                  # 设备管理业务逻辑
 │   ├── adb_client.py              # USB/无线 ADB 操作
 │   ├── deployment.py              # 下载、认证选项、安装与恢复
+│   ├── frontend/                  # 恢复的 Vue3/shadcn 风格 Windows 页面源码
+│   │   ├── src/App.vue            # 六页面、卡片与设备下拉框
+│   │   ├── src/style.css          # 经典浅色视觉设计
+│   │   └── tests/                 # 浏览器交互回归
 │   ├── assets/                    # APP PNG / ICO / SVG 图标
 │   └── tests/                     # Windows Qt 与 ADB 回归测试
 ├── web-console/                   # Android 设备端 Go + 浏览器页面
@@ -158,20 +162,22 @@ android-web-desktop/
 └── README.md
 ```
 
-仓库根目录只包含上述五类项目文件，不再保留旧 Edge/Vue Windows 管理器。Android 网页端依旧使用 HTML/JavaScript，这是远程浏览器界面，并非 Windows 客户端实现。
+仓库根目录仍只有上述五类文件。Windows 客户端的 Vue 3 页面已恢复，但渲染容器是 **QtWebEngine，不是外部 Edge/WebView2，也不是通过 localhost 启动的独立网页服务器**。Android 的 8765 网页端是另一个独立 HTML/JavaScript 界面。
 
 ### 从源码构建 Windows 客户端
 
 在 Windows 10/11 x64 环境中，使用 Python 3.12：
 
 ```powershell
+npm ci --prefix installer/frontend
+npm run build --prefix installer/frontend
 python -m pip install PySide6==6.11.3 pyinstaller==6.22.3
 python -m unittest discover -s installer/tests -p "test_manager_*.py"
 python installer/app.py --self-test
-python -m PyInstaller --onedir --windowed --name AndroidWebDesktopManager --icon installer/assets/app.ico --add-data "installer/assets;assets" installer/app.py
+python -m PyInstaller --onedir --windowed --name AndroidWebDesktopManager --icon installer/assets/app.ico --add-data "installer/assets;assets" --add-data "installer/frontend/dist;frontend/dist" installer/app.py
 ```
 
-发布流程在 GitHub Actions Windows runner 上分别构建便携版和独立 EXE，并执行原生 Qt 窗口显示、移动、页面切换及 Python/ADB 测试。当前**仅分发 Windows 客户端**，不制作 macOS/Linux GUI 软件包。Qt for Python 开源版使用 LGPLv3/GPLv3 等适用许可，见 [第三方声明](installer/THIRD_PARTY_NOTICES.md)。
+发布流程在 GitHub Actions Windows runner 上构建 Vue 静态资源，再分别打包含 QtWebEngine 组件的便携版与独立 EXE。测试真实窗口移动、旧版侧边栏/设备下拉框、页面切换、QtWebChannel/Python ADB 交互。当前**仅分发 Windows 客户端**，不制作 macOS/Linux GUI 软件包。Qt for Python（包括 QtWebEngine）开源版依各组件的 LGPLv3/GPLv3 等适用许可，QtWebEngine 还涉及 Chromium 第三方许可证，见 [第三方声明](installer/THIRD_PARTY_NOTICES.md)。
 
 ### 从源码构建 Android ARM64 设备端
 

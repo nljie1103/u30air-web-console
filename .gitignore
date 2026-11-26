@@ -9,6 +9,6 @@ build/
 
 web-console/tests/node_modules/
 
-# Legacy Windows Vue build output (no longer part of source)
+# Windows Vue 3 production bundle and local npm dependencies
 installer/frontend/node_modules/
 installer/frontend/dist/

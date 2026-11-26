@@ -8,8 +8,33 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: 停止已被合并替代的旧版构建
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Only the known superseded v2.5.1 attempts, never unrelated runs.
+          for id in 45772139187 45772355035 45772919968; do
+            status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq .status)
+            if [[ "$status" != completed ]]; then
+              gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/cancel" || echo "Run $id already ended or cancellation unavailable"
+            fi
+          done
   windows:
+    needs: preflight
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,31 +47,46 @@ jobs:
       - name: 安装原生 Qt6 和 PyInstaller
         shell: pwsh
         run: python -m pip install --disable-pip-version-check PySide6==6.11.3 pyinstaller==6.22.3
-      - name: 测试原生 Qt 界面与 ADB 功能
-        shell: pwsh
-        run: |
-          python -m compileall -q installer
-          python -m unittest discover -s installer/tests -p "test_manager_*.py" -v
-          if ($LASTEXITCODE -ne 0) { throw "Qt Python test failure" }
-          python installer/app.py --self-test
-          if ($LASTEXITCODE -ne 0) { throw "Qt self-test failed" }
-          python installer/app.py --gui-smoke-test
-          if ($LASTEXITCODE -ne 0) { throw "Qt native window smoke failed" }
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: web-console/tests/package-lock.json
+          cache-dependency-path: |
+            installer/frontend/package-lock.json
+            web-console/tests/package-lock.json
+
+      - name: 构建恢复的 Vue3/shadcn 风格 Windows 界面
+        shell: pwsh
+        run: |
+          npm ci --prefix installer/frontend --no-audit --no-fund
+          npm run build --prefix installer/frontend
+          if ($LASTEXITCODE -ne 0) { throw "Vue3 build failed" }
+          if (!(Test-Path "installer/frontend/dist/index.html")) { throw "Vue3 bundle missing" }
+          node installer/frontend/tests/e2e.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Original UI regression tests failed" }
+
+      - name: Qt6 WebEngine + Vue3 真实窗口与 ADB 桥接测试
+        shell: pwsh
+        run: |
+          python -m compileall -q installer
+          python -m unittest discover -s installer/tests -p "test_manager_*.py" -v
+          if ($LASTEXITCODE -ne 0) { throw "Qt/Python tests failed" }
+          python installer/app.py --self-test
+          if ($LASTEXITCODE -ne 0) { throw "Qt WebEngine self-test failed" }
+          python installer/app.py --gui-smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "Qt Vue3 window smoke failed" }
+
       - name: Android 8765 网页浏览器交互测试
         shell: pwsh
         run: |
           npm ci --prefix web-console/tests --no-audit --no-fund
           node web-console/tests/e2e.mjs
           if ($LASTEXITCODE -ne 0) { throw "Android web UI tests failed" }
-      - name: 构建原生 Qt6 Windows 便携版
+
+      - name: 构建 Qt6 WebEngine + Vue3 Windows 便携版
         shell: pwsh
         run: |
-          $common = @("--noconfirm","--clean","--windowed","--name","AndroidWebDesktopManager","--icon","installer/assets/app.ico","--add-data","installer/assets;assets","installer/app.py")
+          $common = @("--noconfirm","--clean","--windowed","--name","AndroidWebDesktopManager","--icon","installer/assets/app.ico","--add-data","installer/assets;assets","--add-data","installer/frontend/dist;frontend/dist","installer/app.py")
           python -m PyInstaller --onedir @common
           if ($LASTEXITCODE -ne 0) { throw "Portable Qt6 build failed" }
           $exe = (Resolve-Path "dist/AndroidWebDesktopManager/AndroidWebDesktopManager.exe").Path
@@ -57,10 +97,10 @@ jobs:
           Copy-Item installer/THIRD_PARTY_NOTICES.md dist/AndroidWebDesktopManager/THIRD_PARTY_NOTICES.md
           Compress-Archive -Path dist/AndroidWebDesktopManager -DestinationPath dist/AndroidWebDesktopManager-Portable.zip -CompressionLevel Optimal -Force
           if (!(Test-Path "dist/AndroidWebDesktopManager-Portable.zip")) { throw "Portable ZIP missing" }
-      - name: 构建独立 EXE 与应用图标
+      - name: 构建独立 Qt6+Vue3 EXE 与应用图标
         shell: pwsh
         run: |
-          $common = @("--noconfirm","--clean","--windowed","--name","AndroidWebDesktopManager","--icon","installer/assets/app.ico","--add-data","installer/assets;assets","installer/app.py")
+          $common = @("--noconfirm","--clean","--windowed","--name","AndroidWebDesktopManager","--icon","installer/assets/app.ico","--add-data","installer/assets;assets","--add-data","installer/frontend/dist;frontend/dist","installer/app.py")
           python -m PyInstaller --onefile @common
           if ($LASTEXITCODE -ne 0) { throw "Single-file Qt6 build failed" }
           $exe = (Resolve-Path "dist/AndroidWebDesktopManager.exe").Path
@@ -68,9 +108,10 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "Single-file EXE self-test failed" }
           $p = Start-Process -FilePath $exe -ArgumentList "--gui-smoke-test" -PassThru -Wait
           if ($p.ExitCode -ne 0) { throw "Single-file EXE window test failed" }
-          if (Test-Path "dist/AndroidWebDesktopManager/_internal/PySide6/QtWebEngineCore") { throw "Unexpected QtWebEngine" }
+          # QtWebEngine is intentionally embedded: it renders our restored
+          # Vue3 UI without launching Microsoft Edge or a localhost server.
           if (Test-Path "dist/AndroidWebDesktopManager/_internal/pythonnet") { throw "Unexpected WinForms" }
-          Write-Host "Native Qt Widgets package complete; no browser required."
+          Write-Host "Qt6 WebEngine shell + original Vue3 interface packaged."
       - uses: actions/upload-artifact@v4
         with:
           name: windows-manager
@@ -101,16 +142,18 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           git log -1 --format=%s | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+：.+$'
           grep -Fq "APP_VERSION = \"$VERSION\"" installer/version.py
-          node -e "const p=require('./web-console/tests/package.json');if(p.version!==process.argv[1])process.exit(1)" "$VERSION"
+          node -e 'for (const dir of ["installer/frontend","web-console/tests"]) { const p=require("./"+dir+"/package.json"), l=require("./"+dir+"/package-lock.json"); if ([p.version,l.version,l.packages[""].version].some(v=>v!==process.argv[1])) throw Error("Version mismatch: "+dir); }' "$VERSION"
           test -s dist/windows/AndroidWebDesktopManager.exe
           test -s dist/windows/AndroidWebDesktopManager-Portable.zip
           test -s installer/assets/app.ico
           test -s installer/assets/app-icon.png
           test -f installer/qt_window.py
+          test -f installer/frontend/package.json
+          test -f installer/frontend/src/App.vue
           ! test -e installer/edge_host.py
-          ! test -e installer/frontend/package.json
           (cd web-console && go test -race ./... && go vet ./...)
           node --check web-console/web/app.js
+          node --check installer/frontend/tests/e2e.mjs
           bash -n web-console/deploy/install_linux_mac.sh
           sh -n web-console/deploy/stop.sh
           python3 -m unittest discover -s installer/tests -p "test_manager_*.py"
@@ -120,7 +163,7 @@ jobs:
           paths=subprocess.check_output(['git','ls-files'],text=True).splitlines()
           roots={p.split('/')[0] for p in paths}
           assert roots=={'.github','.gitignore','README.md','installer','web-console'},roots
-          print('Project root and Qt-only Windows client verified')
+          print('Project root, QtWebEngine and restored Vue3 sources verified')
           PY
       - name: 构建 Android ARM64 ZIP
         shell: bash
@@ -146,13 +189,34 @@ jobs:
           VERSION=$(jq -r .version web-console/version.json)
           TITLE=$(jq -r .title web-console/version.json)
           jq -r .notes web-console/version.json > dist/notes.md
-          if gh release view "v$VERSION" >/dev/null 2>&1; then
-            echo "Release v$VERSION exists"
+          HEAD_SHA=$(git rev-parse HEAD)
+          MAIN_SHA=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [[ "$HEAD_SHA" != "$MAIN_SHA" ]]; then
+            echo "Superseded build; skip release"
             exit 0
           fi
-          if ! git ls-remote --tags origin "refs/tags/v$VERSION" | grep -q .; then
-            git tag "v$VERSION"
-            git push origin "v$VERSION"
+          TAG="v$VERSION"
+          REMOTE_TAG=$(git ls-remote origin "refs/tags/$TAG" | cut -f1)
+          if [[ -n "$REMOTE_TAG" && "$REMOTE_TAG" != "$HEAD_SHA" ]]; then
+            # Repair only the unpublished-at-squash v2.5.1 attempts if one
+            # managed to create its tag before the cancellation took effect.
+            if [[ "$VERSION" == 2.5.1 ]] && [[ "$REMOTE_TAG" == bb77a411147be1b84fb56131dcfe5f4571bae9e3 || "$REMOTE_TAG" == 25330a95369df39877a281025d78af8875cb6b5e ]]; then
+              git push --force-with-lease="refs/tags/$TAG:$REMOTE_TAG" origin "$HEAD_SHA:refs/tags/$TAG"
+              if gh release view "$TAG" >/dev/null 2>&1; then
+                gh release upload "$TAG" dist/android-web-desktop-arm64.zip dist/windows/AndroidWebDesktopManager.exe dist/windows/AndroidWebDesktopManager-Portable.zip --clobber
+                gh release edit "$TAG" --title "$TAG｜$TITLE" --notes-file dist/notes.md
+                exit 0
+              fi
+            else
+              echo "Existing release tag points to another commit; refusing to change it" >&2
+              exit 1
+            fi
+          elif [[ -z "$REMOTE_TAG" ]]; then
+            git tag "$TAG"
+            git push origin "$TAG"
           fi
-          gh release create "v$VERSION" dist/android-web-desktop-arm64.zip dist/windows/AndroidWebDesktopManager.exe dist/windows/AndroidWebDesktopManager-Portable.zip \
-            --title "v$VERSION｜$TITLE" --notes-file dist/notes.md --verify-tag
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists at correct commit"
+            exit 0
+          fi
+          gh release create "$TAG" dist/android-web-desktop-arm64.zip dist/windows/AndroidWebDesktopManager.exe dist/windows/AndroidWebDesktopManager-Portable.zip --title "$TAG｜$TITLE" --notes-file dist/notes.md --verify-tag

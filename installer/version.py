@@ -1,2 +1,2 @@
 """Single Windows client version constant. CI matches Android release version."""
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.5.1"
