@@ -17,10 +17,13 @@ def metadata(path):
 
 def main():
     version = metadata("web-console/version.json")["version"]
-    assert re.fullmatch(r"\d+\.\d+\.\d+", version), "Invalid release version"
+    assert re.fullmatch(r"(?:0|[1-9]\d*)\.[0-9]\.[0-9]", version), "Invalid release version"
     assert git("log", "-1", "--format=%s").startswith(version + "："), "Commit version mismatch"
     previous = git("describe", "--tags", "--abbrev=0", "HEAD^")
     assert git("rev-list", "--count", previous + "..HEAD") == "1", "One commit per release required"
+    old = tuple(map(int, previous.removeprefix("v").split(".")))
+    new = tuple(map(int, version.split(".")))
+    assert new > old, "Release must advance"
     assert f'APP_VERSION = "{version}"' in (ROOT / "installer/version.py").read_text(encoding="utf-8")
     for folder in ("installer/frontend", "web-console/tests"):
         lock = metadata(folder + "/package-lock.json")

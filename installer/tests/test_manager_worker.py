@@ -11,7 +11,7 @@ from worker import serve
 
 class Stub:
     def environment(self):
-        return {"version": "2.5.3", "adb_found": False, "adb_path": ""}
+        return {"version": "3.0.0", "adb_found": False, "adb_path": ""}
 
     def install_application(self, serial, source, remote):
         return [serial, source, remote]
@@ -33,7 +33,7 @@ class TestWorker(unittest.TestCase):
         target = io.StringIO()
         serve(source, target, Stub())
         replies = {r["id"]: r for r in map(json.loads, target.getvalue().splitlines())}
-        self.assertEqual(replies[1]["result"]["version"], "2.5.3")
+        self.assertEqual(replies[1]["result"]["version"], "3.0.0")
         self.assertEqual(replies[2]["result"], ["serial", "https://example.com/a.apk", True])
         self.assertFalse(replies[3]["ok"])
         self.assertEqual(replies[4]["error"], "未找到设备")

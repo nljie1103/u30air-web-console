@@ -33,9 +33,10 @@ type appMetadata struct {
 }
 
 type metadataStore struct {
-	mu    sync.Mutex
-	items map[string]appMetadata
-	limit chan struct{}
+	mu         sync.Mutex
+	items      map[string]appMetadata
+	limit      chan struct{}
+	generation uint64
 }
 
 func (m *metadataStore) get(ctx context.Context, state, pkg string) appMetadata {
@@ -66,8 +67,8 @@ func (m *metadataStore) get(ctx context.Context, state, pkg string) appMetadata 
 		m.mu.Unlock()
 		return cached
 	}
+	generation := m.generation
 	m.mu.Unlock()
-
 	result, err := nativeAppMetadata(ctx, state, pkg)
 	if err != nil {
 		path, err := appAPKPath(ctx, pkg, runWith)
@@ -78,6 +79,10 @@ func (m *metadataStore) get(ctx context.Context, state, pkg string) appMetadata 
 	}
 	result.Checked = time.Now()
 	m.mu.Lock()
+	if generation != m.generation {
+		m.mu.Unlock()
+		return result
+	}
 	if m.items == nil {
 		m.items = make(map[string]appMetadata)
 	}
@@ -100,6 +105,7 @@ func (m *metadataStore) invalidate() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.items = nil
+	m.generation++
 }
 
 func appAPKPath(ctx context.Context, pkg string, run androidCommand) (string, error) {

@@ -54,3 +54,26 @@ class TestADBInstaller(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,"签名"):
                     deployment.official_adb_download()
             self.assertEqual(exe.read_bytes(),b"MZ-old")
+
+    def test_upgrade_keeps_previous_distribution_on_publish_failure(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {"LOCALAPPDATA":root}):
+            target=Path(root)/"AndroidWebDesktop"/"platform-tools"
+            target.mkdir(parents=True)
+            names=("adb.exe","AdbWinApi.dll","AdbWinUsbApi.dll")
+            for name in names:
+                (target/name).write_bytes(b"old"+name.encode())
+            with patch.object(deployment,"urlopen",return_value=MockHTTPResponse(tool_archive())):
+                with patch("os.replace",side_effect=PermissionError("locked")):
+                    with self.assertRaises(PermissionError):
+                        deployment.official_adb_download()
+            for name in names:
+                self.assertEqual((target/name).read_bytes(),b"old"+name.encode())
+            self.assertEqual(list(target.parent.iterdir()),[target])
+
+    def test_portable_adb_discovery_uses_manager_directory(self):
+        import adb_client
+        with tempfile.TemporaryDirectory(prefix="中文 directory ") as root:
+            exe=Path(root)/"adb.exe"
+            exe.touch()
+            with patch.object(sys,"frozen",True,create=True), patch.dict(os.environ,{"AWD_MANAGER_DIR":root,"PATH":""}):
+                self.assertEqual(adb_client.locate_adb(),exe)

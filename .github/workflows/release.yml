@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -29,7 +29,7 @@ jobs:
         run: ./installer/tests/windows-adb-tests.ps1
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: '1.27.4'
           cache-dependency-path: installer/host/go.sum
       - name: 安装业务后端打包工具
         run: python -m pip install --disable-pip-version-check pyinstaller==6.22.3
@@ -111,13 +111,15 @@ jobs:
           retention-days: 7
 
   verify:
+    permissions:
+      contents: write
     needs: windows
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: web-console/go.mod
+          go-version: '1.27.4'
           cache: false
       - uses: actions/download-artifact@v4
         with:
@@ -186,6 +188,11 @@ jobs:
           cp web-console/THIRD_PARTY_NOTICES.md dist/package/THIRD_PARTY_NOTICES.md
           printf '%s\n' "$VERSION" > dist/package/VERSION
           (cd web-console && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags nativeicons -trimpath -ldflags "-s -w -X main.version=$VERSION" -o ../dist/package/desktopd .)
+          go version -m dist/package/desktopd
+          go version -m dist/windows/AndroidWebDesktopManager.exe
+          go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
+          "$(go env GOPATH)/bin/govulncheck" -mode=binary dist/package/desktopd
+          "$(go env GOPATH)/bin/govulncheck" -mode=binary dist/windows/AndroidWebDesktopManager.exe
           (cd dist/package && zip -q -r ../android-web-desktop-arm64.zip README.md VERSION desktopd THIRD_PARTY_NOTICES.md installer)
           unzip -t dist/android-web-desktop-arm64.zip | tail -1
           sha256sum dist/android-web-desktop-arm64.zip dist/windows/AndroidWebDesktopManager.exe dist/windows/AndroidWebDesktopManager-Portable.zip
@@ -215,9 +222,11 @@ jobs:
             git push origin "$TAG"
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.assets[] | select(.state=="uploaded") | .name' > dist/existing-assets.txt
-            for name in android-web-desktop-arm64.zip AndroidWebDesktopManager.exe AndroidWebDesktopManager-Portable.zip; do
-              grep -Fxq "$name" dist/existing-assets.txt || { echo "Existing release missing $name" >&2; exit 1; }
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > dist/existing-release.json
+            for asset in dist/android-web-desktop-arm64.zip dist/windows/AndroidWebDesktopManager.exe dist/windows/AndroidWebDesktopManager-Portable.zip; do
+              name="$(basename "$asset")"
+              digest="sha256:$(sha256sum "$asset" | cut -d' ' -f1)"
+              jq -e --arg name "$name" --arg digest "$digest" '.assets | any(.name==$name and .state=="uploaded" and .digest==$digest)' dist/existing-release.json >/dev/null || { echo "Existing release asset mismatch: $name" >&2; exit 1; }
             done
             echo "Release $TAG already exists at correct commit"
             exit 0

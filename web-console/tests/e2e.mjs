@@ -28,6 +28,7 @@ const labels = new Map([
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==', 'base64');
 const calls = [];
 let apkEnabled = false;
+let listMode="normal";
 
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://localhost');
@@ -49,7 +50,7 @@ const server = createServer(async (req, res) => {
   }
   if (path.pathname === '/assets/app.js') return respond(200, readFileSync(join(root, 'app.js')), 'text/javascript');
   if (path.pathname === '/') return respond(200, readFileSync(join(root, 'index.html')), 'text/html');
-  if (path.pathname === '/api/status') return respond(200, { version: '2.5.3', manufacturer: 'ZTE', model: 'U30 Air', android: '13', abi: 'arm64-v8a' });
+  if (path.pathname === '/api/status') return respond(200, { version: '3.0.0', manufacturer: 'ZTE', model: 'U30 Air', android: '13', abi: 'arm64-v8a' });
   if (path.pathname === '/api/metrics') return respond(200, {
     cpuPercent: 28.5, cpuCores: 8,
     memoryTotal: 4294967296, memoryUsed: 2147483648,
@@ -65,7 +66,11 @@ const server = createServer(async (req, res) => {
     calls.push({ action: 'set-auth', ...config });
     return respond(200, { enabled: config.enabled, status: 'saved' });
   }
-  if (path.pathname === '/api/apps') return respond(200, { packages });
+  if (path.pathname === '/api/apps') {
+    if(listMode==="failure")return respond(502,{error:"包管理器不可用"});
+    if(listMode==="empty")return respond(200,{packages:[],truncated:false});
+    return respond(200,{packages,truncated:listMode==="truncated"});
+  }
   if (path.pathname === '/api/app-info') {
     const pkg = path.searchParams.get('package');
     return respond(200, { package: pkg, ...(labels.get(pkg) || { label: pkg, hasIcon: false }) });
@@ -181,6 +186,20 @@ try {
   await page.waitForFunction(() => document.querySelector('#toast')?.textContent?.includes('登录设置已保存'));
   assert(calls.some(c => c.action === 'set-auth' && c.enabled === true && c.password === '1'));
   console.log('PASS live CPU/RAM/storage telemetry and one-character password setting');
+
+  await page.locator('#searchApps').fill('');
+  listMode="failure";
+  await page.locator('#refreshApps').click();
+  await page.getByText('应用列表不可用：包管理器不可用',{exact:true}).waitFor();
+  listMode="empty";
+  await page.locator('#refreshApps').click();
+  await page.getByText('未检测到用户安装的应用',{exact:true}).waitFor();
+  listMode="truncated";
+  labels.set('com.v2ray.ang',{label:'v2rayNG updated',hasIcon:true});
+  await page.locator('#refreshApps').click();
+  await page.getByText('v2rayNG updated',{exact:true}).waitFor();
+  assert((await page.locator('#appCount').textContent()).includes('仅前 300 个'));
+  console.log('PASS package errors, true empty list, truncation and label refresh');
 
   assert.deepEqual(exceptions, [], 'Frontend script must stay error-free');
   console.log('ANDROID_WEB_APPS_E2E_OK');

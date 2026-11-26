@@ -31,6 +31,7 @@ printf '%s\\n' "$*" >> "$AWD_FAKE_ADB_LOG"
 case "$*" in
   "devices -l") printf 'List of devices attached\\nusb-test    device\\n' ;;
   "-s usb-test get-state") printf 'device\\n' ;;
+  "-s usb-test shell ip -o -4 addr show") printf '2: wlan0 inet 192.168.1.20/24 scope global wlan0\n' ;;
   "-s usb-test shell getprop ro.product.cpu.abi") printf 'arm64-v8a\\n' ;;
   "-s usb-test shell readlink /data/local/tmp/android-web-desktop/current")
       printf '%s\\n' "$AWD_FAKE_CURRENT" ;;
@@ -42,7 +43,7 @@ esac
         self.fake_adb.chmod(0o700)
         self.log = root / "commands.log"
 
-    def run_installer(self, previous: str):
+    def run_installer(self, previous: str, ip="192.168.1.20", port="8765"):
         env = os.environ.copy()
         env.update(
             PATH=str(self.bin_dir) + os.pathsep + env["PATH"],
@@ -50,9 +51,16 @@ esac
             AWD_FAKE_ADB_LOG=str(self.log),
         )
         return subprocess.run(
-            ["bash", str(self.install_dir / "install_linux_mac.sh"), "usb-test", "192.168.1.20"],
+            ["bash", str(self.install_dir / "install_linux_mac.sh"), "usb-test", ip, port],
             capture_output=True, text=True, timeout=20, env=env,
         )
+
+    def test_invalid_address_or_port_does_not_contact_adb(self):
+        for ip,port in [("192.168.999.1","8765"),("192.168.1.20","1"),("192.168.1.20","65536"),("192.168.1.20","80 00"),("8.8.8.8","8765")]:
+            with self.subTest(ip=ip,port=port):
+                result=self.run_installer("",ip,port)
+                self.assertNotEqual(result.returncode,0)
+                self.assertFalse(self.log.exists())
 
     def test_same_version_aborts_before_upload(self):
         result = self.run_installer("releases/2.2.2/desktopd")

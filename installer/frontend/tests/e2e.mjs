@@ -49,28 +49,28 @@ try {
   page.on('pageerror', err => errors.push(err.message));
   await page.addInitScript(() => {
     window.__calls = [];
+    window.__devices = [{serial:"U30-AIR-TEST",state:"device"},{serial:"192.168.0.8:5555",state:"offline"}];
     const capture = (name, response) => async (...args) => {
       window.__calls.push({name,args});return response;
     };
     window.pywebview = { api: {
-      environment: capture('environment',{version:'2.5.3',adb_path:'C:\\Android\\adb.exe',adb_found:true}),
-      list_devices: capture('list_devices',[
-        {serial:'U30-AIR-TEST',state:'device'},
-        {serial:'192.168.0.8:5555',state:'offline'}]),
+      environment: capture('environment',{version:'3.0.0',adb_path:'C:\\Android\\adb.exe',adb_found:true}),
+      list_devices: async () => {window.__calls.push({name:'list_devices',args:[]});return window.__devices},
       device_info: capture('device_info',{
         brand:'ZTE',model:'U30 Air',manufacturer:'ZTE',android:'13',
         abi:'arm64-v8a',sdk:'33',build:'U30Air_ABSSV',
         ips:['192.168.0.1'],preferred_ip:'192.168.0.1',
-        installed_version:'2.5.0',listening_address:'192.168.0.1:8765',
+        installed_version:'2.5.0',listening_address:'192.168.0.1:9000',
         network_addresses:[{ip:'192.168.0.1',interface:'br0',role:'热点/局域网'}],
       }),
       read_auth:capture('read_auth',{enabled:true,configured:true}),
       configure_auth:capture('configure_auth',{enabled:false,message:'saved'}),
       list_apps:capture('list_apps',[{name:'com.v2ray.ang',system:false,disabled:false}]),
+      poweroff:capture('poweroff','ok'), reboot:capture('reboot','ok'), open_web:capture('open_web','http://192.168.0.1:9000'),
       choose_apk:capture('choose_apk','C:/Downloads/test.apk'),
       install_application:capture('install_application','Success'),
       get_logs:capture('get_logs',[]), clear_logs:capture('clear_logs',true),
-      check_release:capture('check_release',{version:'2.5.3',notes:'视觉恢复验证'}),
+      check_release:capture('check_release',{version:'3.0.0',notes:'视觉恢复验证'}),
       install_official_adb:capture('install_official_adb','C:\\Android\\adb.exe'),
     }};
   });
@@ -81,7 +81,7 @@ try {
   assert.equal(await page.locator('button.nav-item').count(),6);
   const sidebarColor = await page.locator('.sidebar').evaluate(el=>getComputedStyle(el).backgroundColor);
   assert.equal(sidebarColor,'rgb(255, 255, 255)');
-  assert.equal((await page.locator('.sidebar-profile').innerText()).includes('2.5.3'),true);
+  assert.equal((await page.locator('.sidebar-profile').innerText()).includes('3.0.0'),true);
   console.log('PASS restored original shadcn-style sidebar and four dashboard cards');
 
   await page.locator('.sidebar-toggle').click();
@@ -143,6 +143,27 @@ try {
   }
   await page.waitForFunction(()=>document.querySelector('.brand-icon img')?.naturalWidth>0);
   console.log('PASS all six pages, custom controls and brand logo');
+  await page.getByRole('button',{name:/打开网页桌面/}).click();
+  await page.waitForFunction(()=>window.__calls.some(c=>c.name==='open_web'&&c.args[1]===9000));
+  console.log('PASS actual deployed port used to open web console');
+
+  // Confirm an operation only after the originally selected device is rechecked.
+  await page.locator('button.nav-item[title="设置"]').click();
+  await page.getByRole('button',{name:'关机',exact:true}).click();
+  const offDialog=page.getByRole('dialog',{name:'关闭设备电源'});
+  await offDialog.getByText('U30-AIR-TEST',{exact:true}).waitFor();
+  await page.evaluate(()=>{window.__devices=[{serial:'U30-AIR-TEST',state:'offline'},{serial:'SECOND-DEVICE',state:'device'}]});
+  await offDialog.getByRole('button',{name:'确认关机'}).click();
+  await offDialog.waitFor({state:'hidden'});
+  assert(!(await page.evaluate(()=>window.__calls.some(c=>c.name==='poweroff'))),'Offline target must not receive any power RPC');
+  // After automatic scanning selects a different device, an old modal must close.
+  await page.evaluate(()=>{window.__devices=[{serial:'U30-AIR-TEST',state:'device'},{serial:'SECOND-DEVICE',state:'offline'}]});
+  await page.getByRole('button',{name:'关机',exact:true}).click();
+  await offDialog.waitFor();
+  await page.evaluate(()=>{window.__devices=[{serial:'U30-AIR-TEST',state:'offline'},{serial:'SECOND-DEVICE',state:'device'}]});
+  await offDialog.waitFor({state:'hidden',timeout:25000});
+  assert(!(await page.evaluate(()=>window.__calls.some(c=>c.name==='poweroff'))));
+  console.log('PASS original-target guard on confirmation and automatic device switch');
   assert.deepEqual(errors,[],'No uncaught JS errors in restored Vue3 UI');
   console.log('RESTORED_VUE3_SHADCN_E2E_OK');
 } finally {

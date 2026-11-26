@@ -83,6 +83,10 @@ class Device:
 
 def locate_adb() -> Path | None:
     exe_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+    if getattr(sys, "frozen", False) and os.environ.get("AWD_MANAGER_DIR"):
+        directory = Path(os.environ["AWD_MANAGER_DIR"])
+        if directory.is_absolute():
+            exe_dir = directory
     candidates = [
         exe_dir / "adb.exe",
         exe_dir / "platform-tools" / "adb.exe",
@@ -204,6 +208,30 @@ def parse_lan_ips(output: str) -> list[str]:
     ]
 
 
+def read_running_listener(adb, serial: str, pid: str | None = None) -> str:
+    if pid is None:
+        pid = adb.shell(serial, "cat", DATA_DIR + "/server.pid", timeout=5).strip()
+    if not pid.isascii() or not pid.isdecimal() or not 1 < int(pid) < 2**31:
+        raise ADBError("服务 PID 无效")
+    command = adb.shell(serial, "cat", f"/proc/{pid}/cmdline", timeout=5)
+    args = command.split("\x00")
+    executable = args[0]
+    if executable != DATA_DIR + "/current" and not (
+        executable.startswith(DATA_DIR + "/") and
+        VERSION_RE.fullmatch(executable[len(DATA_DIR)+1:])
+    ):
+        raise ADBError("服务进程身份不匹配")
+    try:
+        index = args.index("-listen")
+        endpoint = args[index+1]
+    except (ValueError, IndexError):
+        endpoint = next((arg[8:] for arg in args if arg.startswith("-listen=")), "")
+    host, sep, port = endpoint.partition(":")
+    if not sep or not is_rfc1918(host) or not port.isascii() or not port.isdecimal() or not 1024 <= int(port) <= 65535:
+        raise ADBError("服务监听地址无效")
+    return f"{host}:{int(port)}"
+
+
 class ADB:
     def __init__(self, adb_path: str | Path):
         path = Path(adb_path)
@@ -261,19 +289,7 @@ class ADB:
             return self.shell(serial, "readlink", DATA_DIR + "/current", timeout=8).strip()
 
         def listener_request() -> str:
-            """Read current daemon binding, not merely the first device IP."""
-            pid = self.shell(serial, "cat", DATA_DIR + "/server.pid", timeout=5).strip()
-            if not pid.isdecimal() or not 1 < int(pid) < 2**22:
-                return ""
-            command = self.shell(serial, "cat", f"/proc/{pid}/cmdline", timeout=5)
-            if DATA_DIR not in command:
-                return ""
-            match = re.search(
-                r"(?:^|\x00)-listen(?:\x00|=)"
-                r"((?:\d{1,3}\.){3}\d{1,3}:\d{1,5})(?:\x00|$)",
-                command,
-            )
-            return match.group(1) if match else ""
+            return read_running_listener(self, serial)
 
         # Connections may be slower than the desktop UI, but Python bridge
         # invocation happens off the UI thread and these calls can overlap.

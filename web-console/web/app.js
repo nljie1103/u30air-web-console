@@ -1,5 +1,4 @@
 const byId=id=>document.getElementById(id);
-const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function api(path,method='GET',data=null){
  const opt={method,credentials:'same-origin',cache:'no-store'};
  if(method==='POST'){opt.headers={'Content-Type':'application/json','X-Desktop-Action':'1'};opt.body=JSON.stringify(data||{});}
@@ -30,7 +29,7 @@ if(login){
  const screen=byId('screen'),empty=byId('emptyState');
  let refreshing=false,frameUrl='',startPoint=null,apps=[],availableVersion='';
  const appDetails=new Map();
- let detailsGeneration=0, renderQueued=false;
+ let detailsGeneration=0, renderQueued=false, appListGeneration=0, appsTruncated=false, appsError="";
  function scheduleAppsRender(){
   if(renderQueued)return;
   renderQueued=true;
@@ -103,7 +102,7 @@ if(login){
     const response=await fetch('/api/apk/install',{method:'POST',headers:{'Content-Type':'application/vnd.android.package-archive','X-Desktop-Action':'1'},body:source});
     const result=await response.json();if(!response.ok)throw Error(result.error||'安装失败');
    }else await api('/api/apk/install','POST',{url:source});
-   progress.textContent='安装完成';toast('APK 安装成功');appDetails.clear();await loadApps();
+   progress.textContent='安装完成';toast('APK 安装成功');appDetails.clear();await loadApps(true);
   }catch(e){progress.textContent=e.message;toast(e.message)}
   finally{clearInterval(poll);apkBusy=false;apkToggle.disabled=false;buttons.forEach(b=>b.disabled=false)}
  }
@@ -243,7 +242,8 @@ if(login){
    const label=appDetails.get(pkg)?.label||pkg;
    return pkg.toLowerCase().includes(match)||label.toLowerCase().includes(match);
   });
-  byId('appCount').textContent=apps.length+' 个';
+  byId('appCount').textContent=appsError?'读取失败':apps.length+' 个'+(appsTruncated?'（仅前 300 个）':'');
+  if(appsError){const el=document.createElement('div');el.className='muted';el.textContent=appsError;container.append(el);return;}
   if(!visible.length){
    const el=document.createElement('div');el.className='muted';
    el.textContent=apps.length?'没有匹配的应用':'未检测到用户安装的应用';
@@ -289,7 +289,7 @@ if(login){
      const meta=await api('/api/app-info?package='+encodeURIComponent(pkg));
      if(generation!==detailsGeneration)return;
      if(meta.package===pkg){
-      appDetails.set(pkg,meta);
+      appDetails.set(pkg,{...meta,checked:Date.now()});
       scheduleAppsRender();
      }
     }catch{
@@ -299,17 +299,23 @@ if(login){
    }
   }));
  }
- async function loadApps(){
+ async function loadApps(force=false){
+  const generation=++appListGeneration;
+  ++detailsGeneration;
   try{
-   const r=await api('/api/apps');
+   const r=await api('/api/apps'+(force?'?refresh=1':''));
+   if(generation!==appListGeneration)return;
    apps=(r.packages||[]).filter(pkg=>typeof pkg==='string');
-   for(const pkg of appDetails.keys())if(!apps.includes(pkg)||!appDetails.get(pkg)?.hasIcon)appDetails.delete(pkg);
+   appsTruncated=Boolean(r.truncated);appsError='';
+   for(const [pkg,meta] of appDetails)if(force||!apps.includes(pkg)||Date.now()-meta.checked>=(meta.hasIcon?600000:30000))appDetails.delete(pkg);
    renderApps();void enrichApps(apps);
   }catch(err){
-   byId('appList').textContent='应用列表不可用：'+err.message;
+   if(generation!==appListGeneration)return;
+   appsError='应用列表不可用：'+err.message;renderApps();
   }
  }
  byId('searchApps').addEventListener('input',renderApps);
+ byId('refreshApps').addEventListener('click',()=>void loadApps(true));
  async function probeVnc(){
   const button=byId('probeVnc'),link=byId('vncLink'),status=byId('vncStatus');
   button.disabled=true;
@@ -364,7 +370,7 @@ if(login){
   try{await api('/api/update/apply','POST');toast('更新已准备就绪，服务即将重启');setTimeout(()=>location.reload(),14000);}
   catch(err){toast(err.message);button.disabled=false;}
  });
- status();loadApps();capture();void probeVnc();void refreshAuth();void refreshMetrics();
+ status();loadApps();setInterval(()=>void loadApps(),60000);capture();void probeVnc();void refreshAuth();void refreshMetrics();
  setInterval(capture,1500);setInterval(status,12000);setInterval(refreshMetrics,5000);
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)capture()});
 }

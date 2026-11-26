@@ -1,27 +1,28 @@
 #!/system/bin/sh
-set -u
+set -eu
 BASE=/data/local/tmp/android-web-desktop
-PIDFILE="$BASE/server.pid"
-[ -f "$PIDFILE" ] || { echo "Service is not running"; exit 0; }
-PID="$(cat "$PIDFILE")"
-case "$PID" in
-  ''|*[!0-9]*) echo "Invalid service PID"; exit 1 ;;
+[ -x "$BASE/current" ] || { echo "Missing managed service executable"; exit 1; }
+case "$(readlink "$BASE/current")" in
+  releases/[012].*/desktopd)
+    if [ -f "$BASE/server.pid" ]; then
+      PID="$(cat "$BASE/server.pid")"
+      case "$PID" in ''|*[!0-9]*) exit 1 ;; esac
+      [ "$PID" -gt 1 ] || exit 1
+      if [ -d "/proc/$PID" ]; then
+        EXE="$(readlink "/proc/$PID/exe")" || exit 1
+        [ "$EXE" = "$BASE/$(readlink "$BASE/current")" ] || { echo "Stale service PID"; exit 1; }
+        START="$(awk '{print $22}' "/proc/$PID/stat")" || exit 1
+        [ -n "$START" ] || exit 1
+        [ "$(awk '{print $22}' "/proc/$PID/stat")" = "$START" ] || exit 1
+        kill "$PID" || exit 1
+        n=0
+        while [ -d "/proc/$PID" ] && [ "$(awk '{print $22}' "/proc/$PID/stat" 2>/dev/null || true)" = "$START" ]; do
+          n=$((n+1)); [ "$n" -lt 50 ] || exit 1
+          sleep 0.1
+        done
+      fi
+      rm -f "$BASE/server.pid" "$BASE/server.identity"
+    fi ;;
+  *) "$BASE/current" -service-action stop -state-dir "$BASE" ;;
 esac
-[ "$PID" -gt 1 ] || { echo "Unsafe service PID"; exit 1; }
-if kill -0 "$PID" 2>/dev/null; then
-  # A stale PID might belong to an unrelated system process. Fail closed.
-  PROCESS="$(tr '\000' ' ' < "/proc/$PID/cmdline" 2>/dev/null || true)"
-  case "$PROCESS" in
-    *"$BASE"*) ;;
-    *) echo "PID does not belong to this service; refusing to signal it"; exit 1 ;;
-  esac
-  kill "$PID" 2>/dev/null || { echo "Could not stop service"; exit 1; }
-  n=0
-  while kill -0 "$PID" 2>/dev/null; do
-    n=$((n + 1))
-    [ "$n" -lt 30 ] || { echo "Service did not exit"; exit 1; }
-    sleep 0.1
-  done
-fi
-rm -f "$PIDFILE"
 echo "Service stopped"

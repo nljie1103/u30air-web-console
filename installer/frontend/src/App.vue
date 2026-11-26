@@ -24,7 +24,7 @@ type InfoData = {
 type AndroidApp = { name: string; system: boolean; disabled: boolean }
 type Entry = { time: string; level: string; message: string }
 type DialogData = {
-  title: string; description: string; confirmText: string
+  title: string; description: string; confirmText: string; serial?: string
   destructive?: boolean; expected?: string; inputLabel?: string
   inputPlaceholder?: string; initial?: string; onConfirm: (input: string) => Promise<void> | void
 }
@@ -48,6 +48,7 @@ const devicePickerRef = ref<HTMLElement | null>(null)
 const appsLoadedFor = ref('')
 let logPollBusy = false
 let quietScanBusy = false
+let deviceEpoch = 0
 let infoGeneration = 0
 let initFailureCount = 0
 const info = ref<InfoData>({})
@@ -186,6 +187,7 @@ async function refreshDevicesQuietly() {
   quietScanBusy = true
   try {
     const found = await invoke<Device[]>('list_devices')
+    if (loading.value) return
     const old = devices.value.map(d => d.serial + ':' + d.state).join('|')
     const latest = found.map(d => d.serial + ':' + d.state).join('|')
     if (old !== latest) {
@@ -201,7 +203,7 @@ async function refreshDevicesQuietly() {
         if (first) await loadDevice(first.serial)
       }
     }
-  } catch { /* disconnected ADB is handled by the manual refresh action */ }
+  } catch { if (modal.value?.serial) { closeDialog(); showToast("设备扫描失败，已取消操作", "error") } }
   finally { quietScanBusy = false }
 }
 async function clearLogs() {
@@ -314,20 +316,49 @@ function deviceMenuKeydown(event: KeyboardEvent) {
   }
 }
 function requireDevice() {
-  if (!selected.value || !selectedReady.value) { showToast('请先选择已授权且在线的设备', 'error'); return false }
+  if (!selected.value || !selectedReady.value || scanning.value || deviceLoading.value) { showToast('请先选择已授权且在线的设备', 'error'); return false }
   return true
 }
+function targetValid(serial: string) {
+  return selected.value === serial && selectedReady.value && !scanning.value && !deviceLoading.value
+}
 function openDialog(data: DialogData) {
+  if (data.serial && !targetValid(data.serial)) {
+    showToast('设备已变化或状态未确认，请重新操作', 'error'); return
+  }
   modalInput.value = data.initial || ''
   modal.value = data
 }
 function closeDialog() { modal.value = null; modalInput.value = '' }
+watch([selected, selectedReady], () => {
+  ++deviceEpoch
+  if (modal.value?.serial && !targetValid(modal.value.serial)) {
+    closeDialog()
+    showToast('目标设备已变化，已取消操作', 'info')
+  }
+}, { flush: 'sync' })
 async function confirmDialog() {
   const value = modalInput.value.trim()
   const m = modal.value
   if (!m) return
   if (m.expected && value !== m.expected) { showToast('确认内容不匹配', 'error'); return }
   if (m.inputLabel && !value) { showToast('请填写必要信息', 'error'); return }
+  if (m.serial) {
+    const serial = m.serial, epoch = deviceEpoch
+    if (!targetValid(serial) || quietScanBusy) { closeDialog(); showToast('设备状态正在变化，请重新操作', 'error'); return }
+    try {
+      const found = await invoke<Device[]>('list_devices')
+      if (modal.value !== m || epoch !== deviceEpoch || !targetValid(serial) ||
+          !found.some(d => d.serial === serial && d.state === 'device')) {
+        if (modal.value === m) closeDialog()
+        showToast('目标设备已离线或变化，已取消操作', 'error'); return
+      }
+    } catch {
+      if (modal.value === m) closeDialog()
+      showToast('无法确认设备在线，已取消操作', 'error'); return
+    }
+  }
+  if (modal.value !== m) return
   closeDialog()
   await m.onConfirm(value)
 }
@@ -379,43 +410,45 @@ function authOption() {
 async function saveAuth() {
   if (!requireDevice() || !installed.value) return
   const serial = selected.value
+  const enabled = editAuthEnabled.value, password = editAuthPassword.value
   if (editAuthEnabled.value && !editAuthPassword.value && !currentAuthEnabled.value) {
     showToast('重新开启登录需要输入一个密码', 'error')
     return
   }
   openDialog({
-    title: '保存网页访问密码设置',
+    serial, title: '保存网页访问密码设置',
     description: editAuthEnabled.value
       ? '将更新设备的网页登录方式并短暂重启 8765 服务。可使用任何非空密码，不要求长度和特殊字符。'
       : '关闭密码后，同一 Wi-Fi 局域网中可访问该地址的设备均可控制 Android。',
     confirmText:'保存设置', destructive:!editAuthEnabled.value,
     onConfirm:async()=>{
       await work('正在更新网页登录配置…',
-        ()=>invoke('configure_auth', serial, editAuthEnabled.value, editAuthPassword.value),
+        ()=>invoke('configure_auth', serial, enabled, password),
         async()=>{editAuthPassword.value='';await loadAuth();showToast('登录设置已保存')})
     },
   })
 }
 async function deploy(mode: 'online' | 'offline') {
   if (!requireDevice()) return
+  const serial = selected.value, epoch = deviceEpoch
   const ip = preferredIp.value
   if (!ip) { showToast('请填写设备实际局域网 IPv4', 'error'); return }
   const options = authOption()
   if (!options) return
   if (mode === 'online') {
-    openDialog({ title: installed.value ? '升级网页桌面' : '部署网页桌面',
+    openDialog({ serial, title: installed.value ? '升级网页桌面' : '部署网页桌面',
       description: '将从项目 GitHub Release 下载 ARM64 安装包并验证 SHA256。部署时可能短暂中断现有服务。',
       confirmText: '确认部署', onConfirm: async () => {
-        await work('正在下载安装包并部署…', () => invoke<ResultInstall>('install_latest', selected.value, ip, options.enabled, options.password), onInstalled)
+        await work('正在下载安装包并部署…', () => invoke<ResultInstall>('install_latest', serial, ip, options.enabled, options.password), onInstalled)
       },
     })
   } else {
     let file = ''
     try { file = await invoke<string>('choose_local_zip') } catch (cause: any) { showToast(String(cause), 'error'); return }
-    if (!file) return
-    openDialog({ title: '安装本地 ZIP', description: '本地安装包不会进行 GitHub 发布摘要校验，请确认文件来源可信。\n' + file,
+    if (!file || epoch !== deviceEpoch || !targetValid(serial)) return
+    openDialog({ serial, title: '安装本地 ZIP', description: '本地安装包不会进行 GitHub 发布摘要校验，请确认文件来源可信。\n' + file,
       confirmText: '继续安装', onConfirm: async () => {
-        await work('正在部署本地安装包…', () => invoke<ResultInstall>('install_local', selected.value, ip, file, options.enabled, options.password), onInstalled)
+        await work('正在部署本地安装包…', () => invoke<ResultInstall>('install_local', serial, ip, file, options.enabled, options.password), onInstalled)
       },
     })
   }
@@ -431,11 +464,12 @@ async function onInstalled(result: ResultInstall) {
 }
 function uninstall() {
   if (!requireDevice() || !installed.value) { if (!installed.value) showToast('当前设备尚未安装项目', 'info'); return }
+  const serial = selected.value
   openDialog({
-    title: '卸载设备端网页桌面', description: '将删除项目程序、口令、日志和所有历史版本。此操作不会影响其他应用。',
+    serial, title: '卸载设备端网页桌面', description: '将删除项目程序、口令、日志和所有历史版本。此操作不会影响其他应用。',
     confirmText: '确认卸载', destructive: true, expected: '卸载', inputLabel: '请输入「卸载」确认操作',
     onConfirm: async () => {
-      await work('正在卸载项目…', () => invoke<string>('uninstall', selected.value), async result => {
+      await work('正在卸载项目…', () => invoke<string>('uninstall', serial), async result => {
         info.value.installed_version = null
         showToast(result)
       })
@@ -444,14 +478,14 @@ function uninstall() {
 }
 async function installAPK(remote: boolean) {
   if (!requireDevice() || loading.value || preview) return
-  const serial = selected.value
+  const serial = selected.value, epoch = deviceEpoch
   let source: string
   try { source = remote ? apkLink.value.trim() : await invoke<string>('choose_apk') }
   catch (cause) { showToast(String(cause), 'error'); return }
-  if (selected.value !== serial) return
+  if (epoch !== deviceEpoch || !targetValid(serial)) return
   if (!source) return
   openDialog({
-    title: '确认安装 APK',
+    serial, title: '确认安装 APK',
     description: (remote ? '将使用电脑网络下载 APK，再通过 ADB 安装。' : '将通过 ADB 安装所选本地 APK。') + ' 请确认文件来源可信；不会自动卸载旧应用。',
     confirmText: '安装应用',
     onConfirm: async () => {
@@ -471,23 +505,24 @@ async function installAPK(remote: boolean) {
 }
 function removeApplication(pkg: AndroidApp) {
   if (!requireDevice()) return
+  const serial = selected.value
   if (pkg.system) {
-    openDialog({ title: pkg.disabled ? '恢复系统应用' : '停用系统应用',
+    openDialog({ serial, title: pkg.disabled ? '恢复系统应用' : '停用系统应用',
       description: '系统组件操作存在风险，可能影响网络、桌面或启动。请先确认该包可安全调整。\n' + pkg.name,
       confirmText: pkg.disabled ? '确认恢复' : '确认停用',
       destructive: !pkg.disabled, expected: pkg.name, inputLabel: '输入完整包名确认',
       onConfirm: async () => {
-        await work('正在调整系统组件…', () => invoke<string>('set_system_app', selected.value, pkg.name, pkg.disabled), async result => {
+        await work('正在调整系统组件…', () => invoke<string>('set_system_app', serial, pkg.name, pkg.disabled), async result => {
           showToast(result || '操作已执行'); await loadApps()
         })
       },
     })
   } else {
-    openDialog({ title: '卸载普通应用', description: '将为当前主用户卸载 ' + pkg.name + '，应用数据可能丢失。',
+    openDialog({ serial, title: '卸载普通应用', description: '将为当前主用户卸载 ' + pkg.name + '，应用数据可能丢失。',
       confirmText: '卸载应用', destructive: true,
       expected: pkg.name, inputLabel: '输入完整包名确认',
       onConfirm: async () => {
-        await work('正在卸载应用…', () => invoke<string>('uninstall_app', selected.value, pkg.name), async result => {
+        await work('正在卸载应用…', () => invoke<string>('uninstall_app', serial, pkg.name), async result => {
           showToast(result || '已卸载'); await loadApps()
         })
       },
@@ -496,13 +531,14 @@ function removeApplication(pkg: AndroidApp) {
 }
 function requestPower(operation: 'reboot' | 'poweroff') {
   if (!requireDevice()) return
+  const serial = selected.value
   const off = operation === 'poweroff'
-  openDialog({ title: off ? '关闭设备电源' : '重新启动设备',
+  openDialog({ serial, title: off ? '关闭设备电源' : '重新启动设备',
     description: off ? '设备关机后可能需要现场手动开机，无法保证能通过网络再次唤醒。' : '重启将暂时断开 ADB 和网页桌面连接。',
     confirmText: off ? '确认关机' : '确认重启', destructive: off,
     onConfirm: async () => {
       await work(off ? '正在发送关机命令…' : '正在发送重启命令…',
-        () => invoke<string>(operation, selected.value), result => showToast(result))
+        () => invoke<string>(operation, serial), result => showToast(result))
     },
   })
 }
@@ -513,8 +549,9 @@ async function openWeb() {
     showToast('当前服务仍绑定旧地址，请在部署页使用推荐网关重新安装或升级', 'info')
     return
   }
-  if (!preferredIp.value) { showToast('没有可访问的设备 IP 地址', 'error'); return }
-  await work('正在打开网页控制台…', () => invoke<string>('open_web', preferredIp.value, 8765), url => showToast('正在打开 ' + url))
+  const endpoint = info.value.listening_address?.match(/^([0-9.]+):(\d+)$/)
+  if (!endpoint) { showToast('未检测到正在运行的网页服务，请先部署或刷新状态', 'error'); return }
+  await work('正在打开网页控制台…', () => invoke<string>('open_web', endpoint[1], Number(endpoint[2])), url => showToast('正在打开 ' + url))
 }
 function chooseAdb() {
   work('正在选择 ADB…', () => invoke<string>('choose_adb'), result => {
@@ -1100,7 +1137,7 @@ watch(showSystem, () => {
       <div class="dialog-panel" role="dialog" aria-modal="true" :aria-label="modal.title">
         <button class="dialog-close" title="关闭" @click="closeDialog"><X :size="17" /></button>
         <div class="dialog-icon" :class="{ danger: modal.destructive }"><ShieldAlert v-if="modal.destructive" :size="22" /><Info v-else :size="22" /></div>
-        <h2>{{ modal.title }}</h2><p class="dialog-description">{{ modal.description }}</p>
+        <h2>{{ modal.title }}</h2><p v-if="modal.serial" class="dialog-description">目标设备：<strong>{{ modal.serial }}</strong></p><p class="dialog-description">{{ modal.description }}</p>
         <template v-if="modal.inputLabel">
           <label class="field-label">{{ modal.inputLabel }}</label>
           <input v-model="modalInput" class="dialog-input" :placeholder="modal.inputPlaceholder || ''"

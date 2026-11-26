@@ -76,7 +76,7 @@ try {
   $ErrorActionPreference = "Continue"
   $output=(& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath -AdbPath $mock -NonInteractive 2>&1 | Out-String)
   $ErrorActionPreference = $previousPreference
-  if ($LASTEXITCODE -ne 0 -or $output -notmatch 'Login password:') {
+  if ($LASTEXITCODE -ne 0 -or $output -notmatch 'Web console:') {
     throw ("Full simulated installation failed: " + $output)
   }
   Write-Host "PASS: end-to-end installation (mock ADB)"

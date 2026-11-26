@@ -73,17 +73,34 @@ class FakeADB:
         self.commands = []
         self.version = "releases/2.0.0/desktopd"
         self.fail_start = False
+        self.pid = ""
+        self.endpoint = "192.168.0.1:9000"
+        self.auth = None
 
     def shell(self, serial, *args, timeout=20):
         self.commands.append(("shell", serial, *args))
+        if args == ("ls", "-a", "/proc"):
+            return self.pid
+        if args[:2] == ("ls", "-a"):
+            return "\n".join([".", ".."] + (["current", "start.sh", "stop.sh"] if self.version else []) +
+                             (["server.pid"] if self.pid else []) + (["auth.json"] if self.auth is not None else []))
         if args[0] == "readlink":
             return self.version
+        if args == ("cat", adb_client.DATA_DIR + "/server.pid"):
+            return self.pid
+        if args == ("cat", f"/proc/{self.pid}/cmdline"):
+            return adb_client.DATA_DIR + "/current\x00-listen\x00" + self.endpoint + "\x00"
+        if args == ("cat", adb_client.DATA_DIR + "/auth.json"):
+            return json.dumps(self.auth)
         if args[0] == "getprop":
             return "arm64-v8a"
         if args[0] == "cat":
             return "0123456789abcdef0123456789abcdef"
-        if args[:2] == ("sh", "/data/local/tmp/android-web-desktop/start.sh") and self.fail_start:
-            raise adb_client.ADBError("start denied")
+        if args[:2] == ("sh", adb_client.DATA_DIR+"/start.sh"):
+            if self.fail_start:
+                raise adb_client.ADBError("start denied")
+            self.pid = str(int(self.pid)+1) if self.pid else "1234"
+            self.endpoint = args[2]
         return ""
 
     def getprop(self, serial, key):
@@ -214,15 +231,12 @@ class TestDeployment(unittest.TestCase):
 
     def test_configure_web_login_keeps_running_port(self):
         class AuthorizedADB(FakeADB):
-            config = {"enabled":False,"password":""}
             stored = None
-            def shell(self,serial,*args,timeout=20):
-                if args==("cat",adb_client.DATA_DIR+"/auth.json"):
-                    return json.dumps(self.config)
-                if args==("cat","/proc/0123456789abcdef0123456789abcdef/cmdline"):
-                    return (adb_client.DATA_DIR+"/current\x00-listen\x00"
-                            "192.168.0.1:8765\x00")
-                return super().shell(serial,*args,timeout=timeout)
+            def __init__(self):
+                super().__init__()
+                self.auth = {"enabled":False,"password":""}
+                self.pid = "1234"
+                self.endpoint = "192.168.0.1:8765"
             def selected(self,serial,*args,timeout=20):
                 if args[0]=="push" and str(args[2]).endswith("auth.json.edit"):
                     self.stored=json.loads(Path(args[1]).read_text(encoding="utf-8"))
@@ -264,12 +278,12 @@ class TestDeployment(unittest.TestCase):
             with self.assertRaisesRegex(adb_client.ADBError, "new server crashed"):
                 deployment.install_on_device(fake, "usb-1", deployment.parse_package(package_zip()), "192.168.0.1")
         commands = fake.commands
-        self.assertTrue(any(c[2:5] == ("mv", "-f", adb_client.DATA_DIR + "/releases/2.1.0/desktopd.rollback") for c in commands))
-        self.assertFalse(any(c[2:5] == ("rm", "-f", adb_client.DATA_DIR + "/releases/2.1.0/desktopd.rollback") for c in commands))
+        self.assertTrue(any(c[2:4] == ("cp", adb_client.DATA_DIR + "/releases/2.1.0/desktopd.rollback") for c in commands))
 
     def test_refuses_old_pid_without_new_process(self):
         fake = FakeADB()
         fake.version = "releases/2.1.0/desktopd"
+        fake.pid = "1234"
         old_shell = fake.shell
         def with_pid(serial, *args, timeout=20):
             if args == ("cat", adb_client.DATA_DIR + "/server.pid"):
@@ -278,9 +292,9 @@ class TestDeployment(unittest.TestCase):
             return old_shell(serial, *args, timeout=timeout)
         fake.shell = with_pid
         with patch.object(deployment, "verify_remote_service") as health:
-            with self.assertRaisesRegex(adb_client.ADBError, "旧进程"):
+            with self.assertRaisesRegex(adb_client.ADBError, "保留备份"):
                 deployment.install_on_device(fake, "usb-1", deployment.parse_package(package_zip()), "192.168.0.1")
-        health.assert_not_called()
+        self.assertTrue(all(call.args[2] == "2.1.0" for call in health.call_args_list))
 
     def test_install_restore_old_version_when_start_fails(self):
         fake = FakeADB()
@@ -296,6 +310,41 @@ class TestDeployment(unittest.TestCase):
             with self.assertRaisesRegex(adb_client.ADBError, "service not ready"):
                 deployment.install_on_device(fake, "usb-1", deployment.parse_package(package_zip()), "192.168.0.1")
         self.assertTrue(any("releases/2.0.0/desktopd" in command for command in fake.commands))
+
+    def test_rebind_failure_restores_original_endpoint_and_health(self):
+        fake = FakeADB()
+        fake.pid = "1234"
+        fake.endpoint = "192.168.0.1:9000"
+        with patch.object(deployment, "verify_remote_service", side_effect=[adb_client.ADBError("new endpoint failed"), None]) as health:
+            with self.assertRaisesRegex(adb_client.ADBError, "new endpoint failed"):
+                deployment.install_on_device(fake, "usb-1", deployment.parse_package(package_zip()), "192.168.1.2")
+        starts = [c[-1] for c in fake.commands if c[2:4] == ("sh", adb_client.DATA_DIR+"/start.sh")]
+        self.assertEqual(starts, ["192.168.1.2:8765", "192.168.0.1:9000"])
+        self.assertEqual([c.args[2] for c in health.call_args_list], ["2.1.0","2.0.0"])
+
+    def test_auth_backup_failure_never_stops_or_removes_live_auth(self):
+        fake = FakeADB()
+        fake.auth = {"enabled":True,"password":"original"}
+        original = fake.shell
+        def disk_full(serial,*args,timeout=20):
+            if args[:2] == ("cp",adb_client.DATA_DIR+"/auth.json"):
+                raise adb_client.ADBError("disk full")
+            return original(serial,*args,timeout=timeout)
+        fake.shell=disk_full
+        with self.assertRaisesRegex(adb_client.ADBError,"disk full"):
+            deployment.install_on_device(fake,"usb-1",deployment.parse_package(package_zip()),"192.168.0.1",auth_enabled=False)
+        self.assertFalse(any(c[2:4]==("sh",adb_client.DATA_DIR+"/stop.sh") for c in fake.commands))
+        self.assertFalse(any(c[2:]==("rm","-f",adb_client.DATA_DIR+"/auth.json") for c in fake.commands))
+
+    def test_auth_recovery_failure_retains_original_backup(self):
+        fake=FakeADB()
+        fake.auth={"enabled":True,"password":"original"}
+        fake.pid="1234"
+        with patch.object(deployment,"verify_remote_service",side_effect=adb_client.ADBError("connection lost")):
+            with self.assertRaisesRegex(adb_client.ADBError,"保留备份"):
+                deployment.configure_device_auth(fake,"usb-1",True,"new")
+        self.assertTrue(any(c[2:4]==("cp",adb_client.DATA_DIR+"/auth.json.before-edit") for c in fake.commands))
+        self.assertFalse(any(c[2:]==("rm","-f",adb_client.DATA_DIR+"/auth.json.before-edit") for c in fake.commands))
 
     def test_first_install_failure_clears_version_pointer(self):
         fake = FakeADB()

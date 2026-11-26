@@ -89,6 +89,8 @@ function Normalize-Address {
   $tcpPort = 5555
   if ($Matches[2]) { $tcpPort = [int]$Matches[2] }
   if ($tcpPort -lt 1 -or $tcpPort -gt 65535) {throw "Invalid ADB port."}
+  $pieces = $ip.Split(".")
+  foreach ($piece in $pieces) { if ($piece -notmatch "^(0|[1-9][0-9]{0,2})$" -or [int]$piece -gt 255) { throw "Invalid IPv4 octet." } }
   $parsed = [System.Net.IPAddress]::Parse($ip).GetAddressBytes()
   if (-not (($parsed[0] -eq 10) -or ($parsed[0] -eq 192 -and $parsed[1] -eq 168) -or ($parsed[0] -eq 172 -and $parsed[1] -ge 16 -and $parsed[1] -le 31))) {
     throw "Use an IPv4 address in the private LAN range."
@@ -136,12 +138,11 @@ if ($abi -ne "arm64-v8a") { throw ("Unsupported CPU architecture: {0}; ARM64 req
 try {
   $ips=@(Get-DeviceIps $serial)
 } catch {
-  Write-Warning "Unable to query interface IP addresses. You can enter -BindIp manually."
-  $ips=@()
+  throw "Unable to query device interfaces; no changes made."
 }
 if ($BindIp) {
   $ip=$BindIp
-  if ($ips.Count -gt 0 -and $ips -notcontains $ip) { throw ("Bind IP {0} is not one of the device's detected addresses: {1}" -f $ip,($ips -join ", ")) }
+  if ($ips -notcontains $ip) { throw ("Bind IP {0} is not one of the device's detected addresses: {1}" -f $ip,($ips -join ", ")) }
 } elseif ($ips.Count -eq 1) {
   $ip=$ips[0]
 } elseif ($NonInteractive) {
@@ -168,26 +169,7 @@ Run-Adb -ArgList @("-s",$serial,"push",$binaryPath,"$dest.next") | Out-Null
 Run-Adb -ArgList @("-s",$serial,"push",(Join-Path $root "start.sh"),"$remote/start.sh.next") | Out-Null
 Run-Adb -ArgList @("-s",$serial,"push",(Join-Path $root "stop.sh"),"$remote/stop.sh.next") | Out-Null
 Run-Adb -ArgList @("-s",$serial,"shell","chmod","700","$dest.next","$remote/start.sh.next","$remote/stop.sh.next") | Out-Null
-if ($oldLink -match '^releases/\d+\.\d+\.\d+/desktopd$') {
-  Run-Adb -ArgList @("-s",$serial,"shell","sh","$remote/stop.sh") | Out-Null
-}
-Run-Adb -ArgList @("-s",$serial,"shell","mv","-f","$dest.next",$dest) | Out-Null
-Run-Adb -ArgList @("-s",$serial,"shell","mv","-f","$remote/start.sh.next","$remote/start.sh") | Out-Null
-Run-Adb -ArgList @("-s",$serial,"shell","mv","-f","$remote/stop.sh.next","$remote/stop.sh") | Out-Null
-Run-Adb -ArgList @("-s",$serial,"shell","rm","-f","$remote/current.new") | Out-Null
-Run-Adb -ArgList @("-s",$serial,"shell","ln","-s","releases/$ver/desktopd","$remote/current.new") | Out-Null
-Run-Adb -ArgList @("-s",$serial,"shell","mv","-f","$remote/current.new","$remote/current") | Out-Null
-Write-Host (Run-Adb -ArgList @("-s",$serial,"shell","sh","$remote/start.sh",$address))
-Write-Host ""
+# The new binary runs the same device-side deployment transaction as Linux/macOS.
+Write-Host (Run-Adb -ArgList @("-s",$serial,"shell","$dest.next","-deploy-version",$ver,"-listen",$address,"-state-dir",$remote))
 Write-Host ("Web console: http://{0}" -f $address) -ForegroundColor Green
-for ($i=0; $i -lt 12; $i++) {
-  $output = & $adbExe -s $serial shell cat "$remote/password.txt" 2>$null
-  $passwordText = (($output | Select-Object -First 1) -as [string]).Trim()
-  if ($LASTEXITCODE -eq 0 -and $passwordText -match '^[0-9a-f]{32}$') {
-    Write-Host ("Login password: {0}" -f $passwordText) -ForegroundColor Yellow
-    exit 0
-  }
-  Start-Sleep -Milliseconds 500
-}
-Write-Warning "Password not available yet. Read the server log via ADB."
-exit 1
+Write-Host "Existing login settings preserved. For a first installation, read password.txt using authorized ADB."

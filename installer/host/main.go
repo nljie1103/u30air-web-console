@@ -69,7 +69,11 @@ func startWorker() (*Worker, error) {
 	}
 	cmd := exec.Command(path)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
-	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
+	manager, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8", "AWD_MANAGER_DIR="+filepath.Dir(manager))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err

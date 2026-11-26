@@ -22,6 +22,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 type release struct {
@@ -153,8 +155,17 @@ func symlinkSwap(state, target string) error {
 }
 func (a *app) install(ctx context.Context, rel release) error {
 	previous, err := os.Readlink(filepath.Join(a.state, "current"))
-	if err != nil {
+	if err != nil || !releasePathRE.MatchString(previous) {
 		return errors.New("未找到当前安装版本；请先执行一次安装器")
+	}
+	lock, err := acquireMaintenance(a.state)
+	if err != nil {
+		return errors.New("服务正在维护")
+	}
+	defer lock.Close()
+	parent, err := readServiceIdentity(a.state)
+	if err != nil || parent.PID != os.Getpid() || parent.Exe != filepath.Join(a.state, previous) {
+		return errors.New("当前服务身份无法确认，取消更新")
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", rel.URL, nil)
 	if err != nil {
@@ -200,91 +211,82 @@ func (a *app) install(ctx context.Context, rel release) error {
 	if err = os.Rename(tmp, target); err != nil {
 		return err
 	}
-	if err = symlinkSwap(a.state, targetRel); err != nil {
-		return err
-	}
 	oldbin := filepath.Join(a.state, previous)
 	if _, err = os.Stat(oldbin); err != nil {
-		_ = symlinkSwap(a.state, previous)
 		return errors.New("找不到旧版本，更新已取消")
 	}
 	out, err := os.OpenFile(filepath.Join(a.state, "update.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
-		_ = symlinkSwap(a.state, previous)
 		return err
 	}
-	cmd := exec.Command(oldbin, "-update-helper", "-previous", previous, "-expected", rel.Version, "-listen", a.addr, "-state-dir", a.state)
+	cmd := exec.Command(oldbin, "-update-helper", "-previous", previous, "-expected", rel.Version, "-listen", a.addr, "-state-dir", a.state, "-parent-pid", strconv.Itoa(parent.PID), "-parent-start", parent.Start)
+	cmd.ExtraFiles = []*os.File{lock}
 	cmd.Stdout = out
 	cmd.Stderr = out
 	cmd.Stdin = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err = cmd.Start(); err != nil {
 		_ = out.Close()
-		_ = symlinkSwap(a.state, previous)
 		return err
 	}
 	_ = cmd.Process.Release()
 	_ = out.Close()
 	return nil
 }
-func updateHelper(addr, state, previous, expected string) {
+func updateHelper(addr, state, previous, expected string, parentPID int, parentStart string) {
+	// fd 3 inherits the same exclusive flock from the initiating daemon.
+	// Keep it open through the new service health check and any rollback.
+	lock := os.NewFile(3, "update.lock")
+	if lock == nil {
+		log.Println("missing maintenance lock")
+		return
+	}
+	defer lock.Close()
+	unix.CloseOnExec(int(lock.Fd()))
+	if !releasePathRE.MatchString(previous) || !releaseTagRe.MatchString("v"+expected) || parentStart == "" {
+		return
+	}
+	parent := serviceIdentity{PID: parentPID, Start: parentStart, Exe: filepath.Join(state, previous)}
 	time.Sleep(3 * time.Second)
-	pidPath := filepath.Join(state, "server.pid")
-	if b, e := os.ReadFile(pidPath); e == nil {
-		if pid, e := strconv.Atoi(strings.TrimSpace(string(b))); e == nil && pid > 1 {
-			_ = syscall.Kill(pid, syscall.SIGTERM)
-		}
+	if err := stopIdentity(parent); err != nil {
+		log.Println("旧服务身份或停止检查失败:", err)
+		return
 	}
-	time.Sleep(time.Second)
-	launch := func() error {
-		out, e := os.OpenFile(filepath.Join(state, "server.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-		if e != nil {
-			return e
+	targetRel := filepath.Join("releases", expected, "desktopd")
+	if err := symlinkSwap(state, targetRel); err != nil {
+		log.Println("版本切换失败，尝试恢复旧服务:", err)
+		if cmd, e := launchManaged(state, addr); e == nil {
+			_ = cmd.Process.Release()
 		}
-		defer out.Close()
-		cmd := exec.Command(filepath.Join(state, "current"), "-listen", addr, "-state-dir", state)
-		cmd.Stdout = out
-		cmd.Stderr = out
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		if e = cmd.Start(); e != nil {
-			return e
-		}
-		return cmd.Process.Release()
+		return
 	}
-	if err := launch(); err != nil {
-		log.Println("新版本启动失败:", err)
+	child, err := launchManaged(state, addr)
+	if err == nil && waitHealth(addr, expected, 18) {
+		_ = child.Process.Release()
+		log.Println("更新已完成:", expected)
+		return
 	}
-	client := &http.Client{Timeout: time.Second}
-	healthy := func() bool {
-		resp, e := client.Get("http://" + addr + "/healthz")
-		if e != nil {
-			return false
-		}
-		defer resp.Body.Close()
-		var b struct{ Version string }
-		return resp.StatusCode == 200 && json.NewDecoder(resp.Body).Decode(&b) == nil && b.Version == expected
+	log.Println("新版本健康检查未通过，恢复上一版本:", err)
+	if child != nil {
+		_ = child.Process.Kill()
+		_ = child.Wait()
 	}
-	for i := 0; i < 18; i++ {
-		time.Sleep(time.Second)
-		if healthy() {
-			log.Println("更新已完成:", expected)
-			return
-		}
-	}
-	log.Println("新版本健康检查未通过，恢复上一版本")
-	if b, e := os.ReadFile(pidPath); e == nil {
-		if pid, e := strconv.Atoi(strings.TrimSpace(string(b))); e == nil && pid > 1 {
-			_ = syscall.Kill(pid, syscall.SIGTERM)
-		}
-	}
-	time.Sleep(time.Second)
-	if err := symlinkSwap(state, previous); err != nil {
+	_ = os.Remove(filepath.Join(state, "server.pid"))
+	_ = os.Remove(filepath.Join(state, "server.identity"))
+	if err = symlinkSwap(state, previous); err != nil {
 		log.Println("回滚失败:", err)
 		return
 	}
-	if err := launch(); err != nil {
+	restored, err := launchManaged(state, addr)
+	if err != nil {
 		log.Println("恢复旧版本失败:", err)
 		return
 	}
-	log.Println("已恢复上一版本")
+	_ = restored.Process.Release()
+	oldVersion := strings.Split(previous, "/")[1]
+	if !waitHealth(addr, oldVersion, 18) {
+		log.Println("旧版本恢复未通过健康检查")
+		return
+	}
+	log.Println("已恢复上一版本:", oldVersion)
 }

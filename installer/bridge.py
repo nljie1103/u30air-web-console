@@ -13,7 +13,7 @@ import threading
 from typing import Any
 import webbrowser
 
-from adb_client import ADB, locate_adb, validate_lan_endpoint
+from adb_client import ADB, ADBError, locate_adb, validate_lan_endpoint, read_running_listener
 from version import APP_VERSION
 from apk import install_apk
 from deployment import (
@@ -161,6 +161,15 @@ class DesktopBridge:
         # App URLs must refer to a local device address, not an arbitrary URL.
         return validate_lan_endpoint(ip + ":5555").split(":")[0]
 
+    @staticmethod
+    def _deployment_port(adb: ADB, serial: str) -> int:
+        try:
+            return int(read_running_listener(adb, serial).rsplit(":", 1)[1])
+        except ADBError:
+            # install_on_device itself distinguishes a stopped/absent service
+            # from an invalid running service before mutating anything.
+            return 8765
+
     def install_latest(self, serial: str, ip: str, auth_enabled: bool | None = None,
                        auth_password: str = "") -> dict:
         def operation():
@@ -171,7 +180,7 @@ class DesktopBridge:
             if package.version != release["version"]:
                 raise ValueError("安装包版本和 Release 不一致")
             url, password = install_on_device(
-                adb, serial, package, self._validate_ip(ip),
+                adb, serial, package, self._validate_ip(ip), self._deployment_port(adb, serial),
                 progress=lambda msg: self.log(msg),
                 auth_enabled=auth_enabled, auth_password=auth_password,
             )
@@ -188,7 +197,7 @@ class DesktopBridge:
                 raise ValueError("本地安装包不存在或格式错误")
             package = parse_package(p.read_bytes())
             url, password = install_on_device(
-                adb, serial, package, self._validate_ip(ip),
+                adb, serial, package, self._validate_ip(ip), self._deployment_port(adb, serial),
                 progress=lambda msg: self.log(msg),
                 auth_enabled=auth_enabled, auth_password=auth_password,
             )

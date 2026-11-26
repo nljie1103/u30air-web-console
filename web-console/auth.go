@@ -34,10 +34,17 @@ func loadAuthConfig(state, legacyPassword string) (authConfig, error) {
 	if err != nil {
 		return authConfig{}, err
 	}
-	var cfg authConfig
-	if err = json.Unmarshal(data, &cfg); err != nil {
-		return cfg, err
+	var raw struct {
+		Enabled  *bool
+		Password string
 	}
+	if err = json.Unmarshal(data, &raw); err != nil {
+		return authConfig{}, err
+	}
+	if raw.Enabled == nil {
+		return authConfig{}, errors.New("登录配置缺少启用状态")
+	}
+	cfg := authConfig{Enabled: *raw.Enabled, Password: raw.Password}
 	if cfg.Enabled && cfg.Password == "" {
 		return cfg, errors.New("已启用登录但未设置密码")
 	}

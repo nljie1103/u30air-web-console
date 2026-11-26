@@ -230,13 +230,19 @@ func (a *app) apkRoutes(mux *http.ServeMux) {
 		a.updating = true
 		a.updater.Unlock()
 		defer func() { a.updater.Lock(); a.updating = false; a.updater.Unlock() }()
+		lock, err := acquireMaintenance(a.state)
+		if err != nil {
+			fail(w, 409, "服务正在维护")
+			return
+		}
+		defer lock.Close()
 		rc := http.NewResponseController(w)
 		_ = rc.SetReadDeadline(time.Now().Add(5 * time.Minute))
 		_ = rc.SetWriteDeadline(time.Now().Add(7 * time.Minute))
 		ctx, cancel := context.WithTimeout(r.Context(), 6*time.Minute)
 		defer cancel()
 		a.apk.progress("接收文件", 0, 0)
-		err := a.installAPK(ctx, w, r)
+		err = a.installAPK(ctx, w, r)
 		if err != nil {
 			a.apk.progress("安装失败", 0, 0)
 			fail(w, 400, err.Error())

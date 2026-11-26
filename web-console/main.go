@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -44,6 +45,7 @@ type app struct {
 	metadata   metadataStore
 	auth       authState
 	apk        apkState
+	login      loginBudget
 }
 
 func randomBytes(n int) []byte {
@@ -133,7 +135,7 @@ func (a *app) validHost(r *http.Request) bool {
 	return r.Host == a.addr
 }
 func (a *app) validMutation(r *http.Request) bool {
-	if r.Method != "POST" || !a.authed(r) || r.Header.Get("X-Desktop-Action") != "1" {
+	if maintenanceActive(a.state) || r.Method != "POST" || !a.authed(r) || r.Header.Get("X-Desktop-Action") != "1" {
 		return false
 	}
 	origin := r.Header.Get("Origin")
@@ -160,22 +162,35 @@ func prop(ctx context.Context, key string) string {
 
 var packageRe = regexp.MustCompile("^([a-zA-Z_][a-zA-Z0-9_]*)([.][a-zA-Z_][a-zA-Z0-9_]*)+$")
 
-func installedApps(ctx context.Context) []string {
+func installedApps(ctx context.Context) ([]string, bool, error) {
 	v, err := runWith(ctx, "/system/bin/pm", "list", "packages", "-3")
 	if err != nil {
-		return []string{}
+		return nil, false, fmt.Errorf("读取 Android 应用列表失败: %w", err)
 	}
+	return parseInstalledApps(v)
+}
+func parseInstalledApps(v string) ([]string, bool, error) {
 	result := make([]string, 0)
+	seen := make(map[string]bool)
 	for _, line := range strings.Split(v, "\n") {
-		name := strings.TrimPrefix(strings.TrimSpace(line), "package:")
-		if packageRe.MatchString(name) {
-			result = append(result, name)
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
 		}
+		if !strings.HasPrefix(line, "package:") {
+			return nil, false, errors.New("Android 包管理器返回异常")
+		}
+		name := strings.TrimPrefix(line, "package:")
+		if !packageRe.MatchString(name) || seen[name] {
+			continue
+		}
+		seen[name] = true
 		if len(result) >= 300 {
-			break
+			return result, true, nil
 		}
+		result = append(result, name)
 	}
-	return result
+	return result, false, nil
 }
 func (a *app) handler() http.Handler {
 	mux := http.NewServeMux()
@@ -211,10 +226,21 @@ func (a *app) handler() http.Handler {
 			fail(w, 400, "invalid json")
 			return
 		}
-		if a.authEnabled() && !a.checkPassword(in.Password) {
-			time.Sleep(350 * time.Millisecond)
-			fail(w, 401, "管理口令不正确")
-			return
+		if a.authEnabled() {
+			host, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err != nil {
+				host = r.RemoteAddr
+			}
+			ok, limited := a.login.attempt(host, time.Now(), func() bool { return a.checkPassword(in.Password) })
+			if limited {
+				w.Header().Set("Retry-After", "30")
+				fail(w, 429, "登录尝试过多，请稍后重试")
+				return
+			}
+			if !ok {
+				fail(w, 401, "管理口令不正确")
+				return
+			}
 		}
 		http.SetCookie(w, &http.Cookie{Name: "awd-session", Value: a.cookieValue(), HttpOnly: true, SameSite: http.SameSiteStrictMode, Path: "/", MaxAge: 86400})
 		respond(w, 200, map[string]string{"status": "ok"})
@@ -242,18 +268,25 @@ func (a *app) handler() http.Handler {
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 			var data struct {
-				Enabled  bool
+				Enabled  *bool
 				Password string
 			}
-			if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+			if err := json.NewDecoder(r.Body).Decode(&data); err != nil || data.Enabled == nil {
 				fail(w, 400, "密码设置格式不正确")
 				return
 			}
-			if err := a.setAuthConfig(data.Enabled, data.Password); err != nil {
+			a.updater.Lock()
+			if a.updating {
+				a.updater.Unlock()
+				fail(w, 409, "设备正在安装或更新")
+				return
+			}
+			defer a.updater.Unlock()
+			if err := a.setAuthConfig(*data.Enabled, data.Password); err != nil {
 				fail(w, 400, err.Error())
 				return
 			}
-			respond(w, 200, map[string]any{"enabled": data.Enabled, "status": "saved"})
+			respond(w, 200, map[string]any{"enabled": *data.Enabled, "status": "saved"})
 		default:
 			fail(w, 405, "method not allowed")
 		}
@@ -297,7 +330,15 @@ func (a *app) handler() http.Handler {
 			fail(w, 405, "method not allowed")
 			return
 		}
-		respond(w, 200, map[string]any{"packages": installedApps(r.Context())})
+		packages, truncated, err := installedApps(r.Context())
+		if err != nil {
+			fail(w, 502, err.Error())
+			return
+		}
+		if r.URL.Query().Get("refresh") == "1" {
+			a.metadata.invalidate()
+		}
+		respond(w, 200, map[string]any{"packages": packages, "truncated": truncated})
 	})
 	// APK label/icon metadata is loaded lazily, after the lightweight app list.
 	// Access is restricted to authenticated users; no external icon provider.
@@ -500,7 +541,14 @@ func (a *app) handler() http.Handler {
 		}
 		a.updating = true
 		a.updater.Unlock()
-		defer func() { a.updater.Lock(); a.updating = false; a.updater.Unlock() }()
+		restart := false
+		defer func() {
+			if !restart {
+				a.updater.Lock()
+				a.updating = false
+				a.updater.Unlock()
+			}
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 		defer cancel()
 		rel, e := fetchRelease(ctx, a.httpClient)
@@ -515,6 +563,7 @@ func (a *app) handler() http.Handler {
 			fail(w, 502, "更新失败："+e.Error())
 			return
 		}
+		restart = true
 		respond(w, 200, map[string]any{"status": "restarting", "version": rel.Version})
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -537,21 +586,56 @@ func main() {
 	addr := flag.String("listen", "192.168.0.1:8765", "设备局域网 IP:端口")
 	state := flag.String("state-dir", stateDefault, "程序数据目录")
 	helper := flag.Bool("update-helper", false, "内部更新进程")
+	parentPID := flag.Int("parent-pid", 0, "更新进程父 PID")
+	parentStart := flag.String("parent-start", "", "更新父进程启动标识")
+	serviceAction := flag.String("service-action", "", "内部服务控制")
+	checkVersion := flag.String("check-health", "", "等待指定版本就绪")
+	deployVersion := flag.String("deploy-version", "", "内部命令行部署事务")
 	previous := flag.String("previous", "", "上一版本相对路径")
 	expected := flag.String("expected", "", "目标版本")
 	flag.Parse()
-	ip, _, e := net.SplitHostPort(*addr)
+	ip, port, e := net.SplitHostPort(*addr)
 	if e != nil {
 		log.Fatal(e)
+	}
+	n, portErr := strconv.Atoi(port)
+	if portErr != nil || n < 1024 || n > 65535 || strconv.Itoa(n) != port {
+		log.Fatal("无效监听端口")
 	}
 	parsed := net.ParseIP(ip)
 	if parsed == nil || parsed.To4() == nil || !parsed.IsPrivate() || parsed.IsLoopback() || parsed.IsUnspecified() {
 		log.Fatal("请指定设备的私有局域网 IPv4；不允许绑定公网或所有网卡")
 	}
 	if *helper {
-		updateHelper(*addr, *state, *previous, *expected)
+		updateHelper(*addr, *state, *previous, *expected, *parentPID, *parentStart)
 		return
 	}
+	if *deployVersion != "" {
+		if err := cliDeploy(*state, *addr, *deployVersion); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if *serviceAction != "" {
+		if err := serviceControl(*state, *serviceAction); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if *checkVersion != "" {
+		if !waitHealth(*addr, *checkVersion, 20) {
+			log.Fatal("服务健康检查失败")
+		}
+		return
+	}
+	if err := os.MkdirAll(*state, 0700); err != nil {
+		log.Fatal(err)
+	}
+	daemonLock, err := lockFile(*state, "server.lock")
+	if err != nil {
+		log.Fatal("another managed service is running:", err)
+	}
+	defer daemonLock.Close()
 	githubClient, err := githubHTTPClient()
 	if err != nil {
 		log.Fatal("GitHub HTTPS 信任配置错误：", err)
@@ -565,7 +649,14 @@ func main() {
 	a.auth.password = authCfg.Password
 	a.auth.disabled = !authCfg.Enabled
 	a.auth.secret = randomBytes(32)
-	_ = os.WriteFile(filepath.Join(*state, "server.pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0600)
+	if err := writeServiceIdentity(*state); err != nil {
+		log.Fatal(err)
+	}
+	if exe, err := os.Readlink("/proc/self/exe"); err == nil && servicePath(*state, exe) {
+		if err = syncServiceScripts(*state); err != nil {
+			log.Fatal("更新管理脚本失败：", err)
+		}
+	}
 	var serverReady atomic.Bool
 	if err := startLocalHealth(*state, &serverReady); err != nil {
 		log.Fatal("cannot launch local readiness check: ", err)

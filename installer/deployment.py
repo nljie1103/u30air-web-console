@@ -14,8 +14,9 @@ from urllib.request import build_opener, ProxyHandler
 from urllib.request import Request, urlopen
 from zipfile import ZipFile
 import io
+import uuid
 
-from adb_client import ADB, ADBError, DATA_DIR, VERSION_RE, is_rfc1918
+from adb_client import ADB, ADBError, DATA_DIR, VERSION_RE, is_rfc1918, read_running_listener
 
 
 REPOSITORY = "nljie1103/u30air-web-console"
@@ -162,6 +163,32 @@ def verify_remote_service(adb: ADB, serial: str, version: str, progress=lambda _
                     pass
     raise ADBError("部署后健康检查未通过：" + str(last_error or "无响应"))
 
+def remote_entries(adb: ADB, serial: str) -> set[str]:
+    # Listing failure is not evidence of absence; never treat transport or
+    # permission errors as a missing file.
+    return set(adb.shell(serial, "ls", "-a", DATA_DIR, timeout=8).splitlines())
+
+
+def require_no_recovery(entries: set[str]) -> None:
+    if any(name.endswith((".rollback", ".before-edit")) for name in entries) or "deployment-recovery" in entries:
+        raise ADBError("检测到尚未验收的恢复备份，请先检查设备端备份与日志，不会覆盖原件")
+
+
+def write_recovery_marker(adb, serial, old_link, old_listen, had_auth):
+    # No plaintext password in recovery metadata.
+    with tempfile.TemporaryDirectory(prefix="awd-recovery-") as temp:
+        marker = Path(temp) / "deployment-recovery"
+        marker.write_text(json.dumps({"previous": old_link, "listen": old_listen,
+                                      "auth_existed": had_auth}), encoding="utf-8")
+        adb.selected(serial, "push", str(marker), DATA_DIR + "/deployment-recovery", timeout=15)
+        adb.shell(serial, "chmod", "600", DATA_DIR + "/deployment-recovery")
+
+
+def preserve_copy(adb, serial, backup, live, timeout=12):
+    adb.shell(serial, "cp", backup, live + ".restore", timeout=timeout)
+    adb.shell(serial, "mv", "-f", live + ".restore", live, timeout=timeout)
+
+
 def install_on_device(
     adb: ADB, serial: str, package: Package, ip: str, port: int = 8765,
     progress=lambda _: None,
@@ -203,19 +230,30 @@ def install_on_device(
     remote = DATA_DIR
     target = f"releases/{package.version}/desktopd"
     base = f"{remote}/releases/{package.version}"
-    old_link = ""
-    try:
-        old_link = adb.shell(serial, "readlink", remote + "/current").strip()
-    except ADBError:
-        pass
+    adb.shell(serial, "mkdir", "-p", remote, timeout=15)
+    entries = remote_entries(adb, serial)
+    require_no_recovery(entries)
+    old_link = adb.shell(serial, "readlink", remote + "/current").strip() if "current" in entries else ""
     old_exists = VERSION_RE.fullmatch(old_link) is not None
+    if "current" in entries and not old_exists:
+        raise ADBError("原版本指针无效，已停止部署")
     replacing_current = old_link == target
     old_pid = ""
-    if old_exists:
-        try:
-            old_pid = adb.shell(serial, "cat", remote + "/server.pid", timeout=6).strip()
-        except ADBError:
-            pass
+    old_listen = ""
+    if "server.pid" in entries:
+        if not old_exists:
+            raise ADBError("发现未识别的旧服务进程，已停止部署")
+        old_pid = adb.shell(serial, "cat", remote + "/server.pid", timeout=6).strip()
+        if not old_pid.isascii() or not old_pid.isdecimal() or not 1 < int(old_pid) < 2**31:
+            raise ADBError("原服务 PID 无效")
+        proc_entries = set(adb.shell(serial, "ls", "-a", "/proc", timeout=8).splitlines())
+        if old_pid in proc_entries:
+            old_listen = read_running_listener(adb, serial, old_pid)
+        else:
+            # A confirmed absent process is a stopped service, not an ADB error.
+            old_pid = ""
+    if "auth.json" in entries:
+        read_device_auth(adb, serial, entries)
 
     # Stage every file before stopping the old service. Never push directly
     # into an executable that might currently be running.
@@ -226,13 +264,16 @@ def install_on_device(
     live_auth = remote + "/auth.json"
     backup_auth = remote + "/auth.json.rollback"
     configured_auth = auth_enabled is not None
-    old_auth_exists = False
+    old_auth_exists = "auth.json" in entries
+    recovery_marker = remote + "/deployment-recovery"
     old_binary_backup = base + "/desktopd.rollback"
     script_backups = (remote + "/start.sh.rollback", remote + "/stop.sh.rollback")
     script_files = (remote + "/start.sh", remote + "/stop.sh")
     stopped = False
+    stop_confirmed = False
     switched = False
     install_healthy = False
+    rollback_healthy = False
 
     try:
         progress("准备临时版本目录")
@@ -258,11 +299,9 @@ def install_on_device(
                 }, ensure_ascii=False), encoding="utf-8")
                 adb.selected(serial, "push", str(local), stage_auth, timeout=30)
             adb.shell(serial, "chmod", "600", stage_auth)
-            try:
+            if old_auth_exists:
                 adb.shell(serial, "cp", live_auth, backup_auth, timeout=10)
-                old_auth_exists = True
-            except ADBError:
-                old_auth_exists = False
+                adb.shell(serial, "chmod", "600", backup_auth)
 
         # Save the old startup scripts even if the app version is changing.
         # Their behavior might change between releases, so rollback needs them.
@@ -274,10 +313,12 @@ def install_on_device(
                 adb.shell(serial, "cp", base + "/desktopd", old_binary_backup, timeout=15)
                 adb.shell(serial, "chmod", "700", old_binary_backup)
 
+        write_recovery_marker(adb, serial, old_link, old_listen, old_auth_exists)
         progress("停止现有服务")
+        stopped = True
         if old_exists:
             adb.shell(serial, "sh", remote + "/stop.sh", timeout=15)
-        stopped = True
+        stop_confirmed = True
 
         # Rename files atomically on the device filesystem.
         adb.shell(serial, "mv", "-f", stage_binary, base + "/desktopd")
@@ -293,57 +334,65 @@ def install_on_device(
 
         progress("启动并验收新服务")
         adb.shell(serial, "sh", remote + "/start.sh", f"{ip}:{port}", timeout=15)
+        verify_remote_service(adb, serial, package.version, progress)
+        if old_pid:
+            new_pid = adb.shell(serial, "cat", remote + "/server.pid", timeout=6).strip()
+            if new_pid == old_pid:
+                raise ADBError("新服务没有重新启动，检测到仍在使用旧进程")
+        if read_running_listener(adb, serial) != f"{ip}:{port}":
+            raise ADBError("新服务未绑定指定的监听地址")
         if auth_enabled is False:
             password = ""
         elif auth_enabled is True:
             password = auth_password
+        elif old_auth_exists:
+            password = ""
         else:
             password = adb.shell(serial, "cat", remote + "/password.txt", timeout=10).strip()
             if not password:
                 raise ADBError("旧版管理口令读取失败，请检查 server.log")
-        if old_pid.isdecimal() and int(old_pid) > 1:
-            new_pid = adb.shell(serial, "cat", remote + "/server.pid", timeout=6).strip()
-            if new_pid == old_pid:
-                raise ADBError("新服务没有重新启动，检测到仍在使用旧进程")
-        verify_remote_service(adb, serial, package.version, progress)
         install_healthy = True
         progress("部署健康检查通过")
-        if auth_enabled is None:
-            # When retaining a user-changed web password, never return the
-            # stale legacy password.txt as if it were still the login secret.
-            if read_device_auth(adb, serial)["configured"]:
-                password = ""
         return f"http://{ip}:{port}", password
 
     except Exception:
         if stopped:
             progress("部署失败，尝试恢复原有服务")
             try:
-                # New startup script could be broken: stop it before restoring files.
-                try:
+                if not stop_confirmed:
+                    raise ADBError("原服务停止状态未确认")
+                # If the new version was started, stop it before restoring.
+                if switched:
                     adb.shell(serial, "sh", remote + "/stop.sh", timeout=12)
-                except ADBError:
-                    pass
                 if configured_auth:
                     if old_auth_exists:
-                        adb.shell(serial, "mv", "-f", backup_auth, live_auth, timeout=10)
+                        preserve_copy(adb, serial, backup_auth, live_auth)
                     else:
                         adb.shell(serial, "rm", "-f", live_auth, timeout=10)
                 if old_exists:
                     for live, backup in zip(script_files, script_backups):
-                        adb.shell(serial, "mv", "-f", backup, live, timeout=12)
+                        preserve_copy(adb, serial, backup, live)
                     if replacing_current:
-                        adb.shell(serial, "mv", "-f", old_binary_backup, base + "/desktopd", timeout=12)
+                        preserve_copy(adb, serial, old_binary_backup, base + "/desktopd", timeout=15)
                     adb.shell(serial, "rm", "-f", remote + "/current.new")
                     adb.shell(serial, "ln", "-s", old_link, remote + "/current.new")
                     adb.shell(serial, "mv", "-f", remote + "/current.new", remote + "/current")
-                    adb.shell(serial, "sh", remote + "/start.sh", f"{ip}:{port}", timeout=15)
-                    progress("已尝试启动上一版本")
+                    if old_listen:
+                        adb.shell(serial, "sh", remote + "/start.sh", old_listen, timeout=15)
+                        verify_remote_service(adb, serial, VERSION_RE.fullmatch(old_link).group(1), progress)
+                        if read_running_listener(adb, serial) != old_listen:
+                            raise ADBError("旧监听地址未恢复")
+                    progress("已恢复上一版本及原监听设置")
+                    rollback_healthy = True
                 elif switched:
                     adb.shell(serial, "rm", "-f", remote + "/current", timeout=10)
                     progress("首次安装失败，已撤销无效版本指针")
-            except Exception:
-                progress("恢复过程失败，请检查设备端日志与备份")
+                    rollback_healthy = True
+                else:
+                    rollback_healthy = True
+            except Exception as recovery_error:
+                progress("恢复过程失败，保留原件与恢复标记：" + str(recovery_error))
+                raise ADBError("部署失败且恢复未通过，已保留备份，请检查设备端日志") from recovery_error
         raise
     finally:
         # Removing stage and optional rollback files never touches a running
@@ -354,8 +403,8 @@ def install_on_device(
             except ADBError:
                 pass
         # Keep rollback material when an attempted recovery has failed.
-        if install_healthy or not stopped:
-            for path in (old_binary_backup, backup_auth, *script_backups):
+        if install_healthy or rollback_healthy or not stopped:
+            for path in (old_binary_backup, backup_auth, *script_backups, recovery_marker):
                 try:
                     adb.shell(serial, "rm", "-f", path, timeout=6)
                 except ADBError:
@@ -383,7 +432,6 @@ def official_adb_download(progress=lambda _: None) -> Path:
     only after validating that all required Windows PE files are present.
     """
     import os
-    import shutil
     url = "https://dl.google.com/android/repository/platform-tools-latest-windows.zip"
     target = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "AndroidWebDesktop" / "platform-tools"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -416,28 +464,34 @@ def official_adb_download(progress=lambda _: None) -> Path:
             if data[:2] != b"MZ":
                 raise ValueError(f"Platform Tools Windows 文件签名异常：{name}")
             (stage / name).write_bytes(data)
-        target.mkdir(parents=True, exist_ok=True)
-        for name in required:
-            # ADB is a three-file distribution; install all three to the
-            # same user-local folder with no system-level registration.
-            shutil.copy2(stage / name, target / (name + ".new"))
-        for name in required:
-            os.replace(target / (name + ".new"), target / name)
+        # Never replace an individual member of the live three-file set.
+        # The previous directory remains usable even when ADB has DLLs open.
+        if target.exists():
+            if all((target / name).is_file() and (target / name).read_bytes() == (stage / name).read_bytes()
+                   for name in required):
+                return target / "adb.exe"
+            target = target.parent / ("platform-tools-" + uuid.uuid4().hex)
+        os.replace(stage, target)
     progress("Google 官方 ADB 已安装，无需配置环境变量")
     return target / "adb.exe"
 
 
-def read_device_auth(adb: ADB, serial: str) -> dict:
-    """Return the login toggle only, never the actual password."""
+def read_device_auth(adb: ADB, serial: str, entries=None) -> dict:
+    """Return the login toggle only; only a confirmed absent file is legacy."""
+    if entries is None:
+        entries = remote_entries(adb, serial)
+    if "auth.json" not in entries:
+        return {"enabled": True, "configured": False}
+    raw = adb.shell(serial, "cat", DATA_DIR + "/auth.json", timeout=7)
     try:
-        raw = adb.shell(serial, "cat", DATA_DIR + "/auth.json", timeout=7)
         value = json.loads(raw)
-        if isinstance(value.get("enabled"), bool):
-            return {"enabled": value["enabled"], "configured": True}
-    except (ADBError, ValueError, TypeError, AttributeError):
-        pass
-    # Older installs without auth.json used mandatory generated passwords.
-    return {"enabled": True, "configured": False}
+        if not isinstance(value["enabled"], bool) or not isinstance(value.get("password", ""), str):
+            raise ValueError("invalid config")
+        if value["enabled"] and not value.get("password"):
+            raise ValueError("empty password")
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ADBError("设备认证配置无法读取，已停止操作") from exc
+    return {"enabled": value["enabled"], "configured": True}
 
 
 def configure_device_auth(adb: ADB, serial: str, enabled: bool, password: str = "",
@@ -448,7 +502,9 @@ def configure_device_auth(adb: ADB, serial: str, enabled: bool, password: str = 
     """
     if not isinstance(enabled, bool):
         raise ValueError("登录开关不合法")
-    current = read_device_auth(adb, serial)
+    entries = remote_entries(adb, serial)
+    require_no_recovery(entries)
+    current = read_device_auth(adb, serial, entries)
     if enabled and not password and not current["enabled"]:
         raise ValueError("重新开启密码验证时，需要填写一个密码")
     if enabled and not password and not current["configured"]:
@@ -463,22 +519,18 @@ def configure_device_auth(adb: ADB, serial: str, enabled: bool, password: str = 
     match = VERSION_RE.fullmatch(old_link)
     if not match:
         raise ADBError("网页控制台尚未部署")
-    try:
-        pid = adb.shell(serial, "cat", DATA_DIR + "/server.pid").strip()
-        cmdline = adb.shell(serial, "cat", "/proc/" + pid + "/cmdline")
-        listen_match = re.search(r"(?:\x00|^)-listen(?:\x00|=)((?:\d{1,3}\.){3}\d{1,3}:\d{1,5})(?:\x00|$)", cmdline)
-        listen = listen_match.group(1) if listen_match else ""
-    except ADBError:
-        listen = ""
-    if not listen:
-        raise ADBError("未检测到正在运行的监听地址，不能安全重启；请到部署页重新安装")
+    listen = read_running_listener(adb, serial)
 
     live = DATA_DIR + "/auth.json"
     backup = DATA_DIR + "/auth.json.before-edit"
     stage = DATA_DIR + "/auth.json.edit"
+    marker = DATA_DIR + "/deployment-recovery"
     had_existing = current["configured"]
     if had_existing:
         adb.shell(serial, "cp", live, backup)
+        adb.shell(serial, "chmod", "600", backup)
+    changed = False
+    healthy = False
     try:
         with tempfile.TemporaryDirectory(prefix="awd-auth-") as temp:
             local = Path(temp) / "auth.json"
@@ -487,26 +539,38 @@ def configure_device_auth(adb: ADB, serial: str, enabled: bool, password: str = 
                                         ensure_ascii=False), encoding="utf-8")
             adb.selected(serial, "push", str(local), stage)
         adb.shell(serial, "chmod", "600", stage)
+        write_recovery_marker(adb, serial, old_link, listen, had_existing)
+        changed = True
         adb.shell(serial, "sh", DATA_DIR + "/stop.sh")
         adb.shell(serial, "mv", "-f", stage, live)
         adb.shell(serial, "chmod", "600", live)
         progress("应用新的网页密码设置并重新启动服务")
         adb.shell(serial, "sh", DATA_DIR + "/start.sh", listen)
         verify_remote_service(adb, serial, match.group(1), progress)
+        if read_running_listener(adb, serial) != listen:
+            raise ADBError("认证重启后的监听地址不一致")
+        healthy = True
     except Exception:
+        if not changed:
+            raise
         progress("认证配置未通过健康检查，正在恢复旧设置")
         try:
             adb.shell(serial, "sh", DATA_DIR + "/stop.sh")
             if had_existing:
-                adb.shell(serial, "mv", "-f", backup, live)
+                preserve_copy(adb, serial, backup, live)
             else:
                 adb.shell(serial, "rm", "-f", live)
             adb.shell(serial, "sh", DATA_DIR + "/start.sh", listen)
-        except ADBError:
-            pass
+            verify_remote_service(adb, serial, match.group(1), progress)
+            if read_running_listener(adb, serial) != listen:
+                raise ADBError("旧监听地址未恢复")
+            healthy = True
+        except Exception as recovery_error:
+            progress("认证恢复未验收，已保留原始备份")
+            raise ADBError("认证恢复失败，已保留备份，请检查设备端日志") from recovery_error
         raise
     finally:
-        for item in (stage, backup):
+        for item in ((stage, backup, marker) if healthy or not changed else (stage,)):
             try:
                 adb.shell(serial, "rm", "-f", item)
             except ADBError:

@@ -59,7 +59,7 @@
 已在中兴 U30 Air（Android 13、ARM64）上验证过项目的基础远程桌面功能。其他型号须满足上述条件，具体权限与兼容性取决于系统固件；当前设备端未提供 32 位 ARM 或 x86 二进制。
 
 > [!IMPORTANT]
-> 本项目的 8765 控制台使用 HTTP，仅应在可信局域网使用，不应映射至公网。关闭访问密码后，所有能访问管理地址的用户都可控制设备；网页 APK 安装开关并不替代身份认证。首次部署需要正常授权 ADB，核心功能不主动请求 Root；部分电源、安装及系统操作仍可能受到固件权限限制。
+> 本项目的 8765 控制台使用 HTTP，仅应在可信局域网使用，不应映射至公网。关闭访问密码后，所有能访问管理地址的用户都可控制设备；网页 APK 安装开关并不替代身份认证。危险设备操作确认框显示原设备序列号；设备离线或切换会取消操作。首次部署需要正常授权 ADB，核心功能不主动请求 Root；部分电源、安装及系统操作仍可能受到固件权限限制。
 
 ---
 
@@ -76,12 +76,12 @@
 3. 在「部署与更新」选择实际热点网关地址，选择是否启用网页密码，再安装最新版。
 4. 安装完成后访问设备的 8765 端口，例如 [http://192.168.0.1:8765/](http://192.168.0.1:8765/)。
 
-管理地址应以设备自身的局域网网卡为准，不能将移动网络动态 IP 当成固定热点网关。升级已部署服务时默认保留原有访问密码设置。
+管理地址应以设备自身的局域网网卡为准，不能将移动网络动态 IP 当成固定热点网关。升级已部署服务时默认保留原有访问密码设置和已知端口。若部署失败会尝试恢复原版本、原监听地址与认证配置；恢复未通过时保留备份并阻止覆盖，需先检查设备端恢复标记和日志。
 
 <details>
 <summary><strong>Linux / macOS：使用命令行部署</strong></summary>
 
-预先安装 ADB、连接并授权设备；使用支持脚本所需命令的 Bash（macOS 需 Bash 4+）。解压 Android ARM64 安装包后执行：
+预先安装 ADB、连接并授权设备；使用 Bash 执行脚本。解压 Android ARM64 安装包后执行：
 
 ```bash
 bash installer/install_linux_mac.sh
@@ -128,13 +128,13 @@ Windows 中进入「应用管理 → APK 安装器」。网页端先启用「APK
 
 ### 访问设置
 
-首次安装可选择免密码，开启时允许自定义任意非空密码。后续可在 Windows「部署与更新」或网页「访问密码」中修改。密码变更会使旧网页登录会话失效。
+首次安装可选择免密码，开启时允许自定义任意非空密码。后续可在 Windows「部署与更新」或网页「访问密码」中修改。密码变更会使旧网页登录会话失效。密码登录设有共享失败尝试预算，连续失败后需短暂等待，不限制用户自选非空密码。
 
 网页端重启及关机需要确认。设备彻底关机后热点也会断开，不能依靠网页重新开机。
 
 ### 升级与卸载
 
-通过 Windows「部署与更新」或 8765「检查更新」获取 GitHub 最新版。更新包使用 HTTPS 与 SHA256 校验；Windows 和网页的更新流程具有健康检查及恢复机制。
+通过 Windows「部署与更新」或 8765「检查更新」获取 GitHub 最新版。更新包使用 HTTPS 与 SHA256 校验；Windows 和网页的更新流程具有健康检查及恢复机制。由旧版本升级至 v3 时，推荐通过 Windows 管理器或命令行部署，以完整应用新版事务与启动脚本。
 
 > [!WARNING]
 > 卸载网页服务会删除本项目的设备端配置、密码、版本文件与日志，不会自动卸载其他 Android 应用。系统组件停用可能影响设备正常使用，操作前应核实用途。
@@ -191,7 +191,7 @@ Windows 使用系统 WebView2，不再捆绑 Chromium 或 Qt。管理界面直�
 | 数据 | 位置与保留方式 |
 |:---|:---|
 | Windows 管理器配置 | 当前用户 LOCALAPPDATA 下 AndroidWebDesktop/manager-settings.json |
-| Windows 官方 ADB | 同目录 platform-tools/ |
+| Windows 官方 ADB | 同目录 platform-tools/ 或独立版本目录 |
 | Android 服务 | /data/local/tmp/android-web-desktop/ |
 | Android 密码及安装开关 | 设备端服务目录下的 auth.json、password.txt、apk-install.enabled |
 | 设备日志 | 设备端 server.log；Windows 运行日志保留在当前会话 |
@@ -206,7 +206,7 @@ Windows 使用系统 WebView2，不再捆绑 Chromium 或 Qt。管理界面直�
 <details>
 <summary><strong>Windows 客户端</strong></summary>
 
-需要 Windows、Go 1.26、Node.js 22 和 Python 3.12。使用 PowerShell：
+需要 Windows、Go 1.26 或更新版本（正式发布用 1.27.4）、Node.js 22 和 Python 3.12。使用 PowerShell：
 
 ```powershell
 npm ci --prefix installer/frontend
@@ -227,7 +227,7 @@ go build -trimpath -tags desktop,production -ldflags "-s -w -H windowsgui" -o An
 <details>
 <summary><strong>Android ARM64 服务</strong></summary>
 
-需要 Go 1.23 或更新版本：
+需要 Go 1.26 或更新版本；正式发布使用 Go 1.27.4：
 
 ```bash
 cd web-console

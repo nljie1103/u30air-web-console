@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -56,9 +57,8 @@ func probeNoVNCURL(ctx context.Context, target string) (string, string) {
 	}
 	// A 200 is not enough: avoid linking to another unrelated service's page.
 	// Checking content is deliberately small and never executes HTML.
-	buf := make([]byte, 8192)
-	n, _ := resp.Body.Read(buf)
-	if !strings.Contains(strings.ToLower(string(buf[:n])), "novnc") {
+	buf, err := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	if err != nil || !strings.Contains(strings.ToLower(string(buf)), "novnc") {
 		return "", "5800 端口响应内容不是 noVNC 页面"
 	}
 	return target, ""
