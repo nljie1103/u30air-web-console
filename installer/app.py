@@ -11,12 +11,12 @@ from urllib.request import urlopen
 from bridge import DesktopBridge
 from local_server import start_frontend_server
 
-APP_VERSION = "2.2.2"
+APP_VERSION = "2.3.0"
 
 
 def frontend_file() -> Path:
     root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-    return root / "manager" / "frontend" / "dist" / "index.html"
+    return root / "installer" / "frontend" / "dist" / "index.html"
 
 
 def self_test(frontend_dir: Path) -> None:
@@ -63,7 +63,7 @@ def main() -> None:
 
     index = frontend_file()
     if not index.is_file():
-        raise SystemExit("Vue frontend build missing. Run npm run build in manager/frontend.")
+        raise SystemExit("Vue frontend build missing. Run npm run build in installer/frontend.")
 
     if args.self_test:
         self_test(index.parent)

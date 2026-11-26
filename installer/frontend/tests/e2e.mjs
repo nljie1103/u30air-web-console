@@ -10,9 +10,9 @@ const python = process.env.AWD_PYTHON || (process.platform === 'win32' ? 'python
 const pythonCode = [
   "from pathlib import Path",
   "import sys, time",
-  "sys.path.insert(0, 'manager')",
+  "sys.path.insert(0, 'installer')",
   "from local_server import start_frontend_server",
-  "server, url = start_frontend_server(Path('manager/frontend/dist'))",
+  "server, url = start_frontend_server(Path('installer/frontend/dist'))",
   "print(url, flush=True)",
   "time.sleep(100)",
 ].join('\n');
@@ -68,8 +68,11 @@ try {
     };
     window.pywebview = {
       api: {
-        environment: track('environment', { version: '2.2.2', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
-        list_devices: track('list_devices', [{ serial: 'USB-TEST-001', state: 'device', detail: 'mock device' }]),
+        environment: track('environment', { version: '2.3.0', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
+        list_devices: track('list_devices', [
+          { serial: 'USB-TEST-001', state: 'device', detail: 'mock device' },
+          { serial: '192.168.1.28:5555', state: 'offline', detail: 'unreachable' },
+        ]),
         device_info: track('device_info', {
           brand: 'Google', model: 'Pixel Test', android: '16', abi: 'arm64-v8a',
           installed_version: '2.2.2', ips: ['192.168.1.20'], build: 'TEST-BUILD',
@@ -89,6 +92,29 @@ try {
   await page.locator('.app-root').waitFor({ state: 'visible', timeout: 12000 });
   assert.equal(await page.locator('button.nav-item').count(), 6, 'Six navigation items required');
   await page.getByText('Pixel Test', { exact: true }).first().waitFor({ state: 'visible', timeout: 12000 });
+  const initialCalls = await page.evaluate(() => window.__mockCalls.map(c => c.name));
+  assert(!initialCalls.includes('list_apps'), 'App listing must not block startup');
+  console.log('PASS lazy application loading on startup');
+
+  const trigger = page.getByRole('button', { name: '选择 Android 设备' });
+  await trigger.click();
+  const picker = page.locator('.device-dropdown');
+  await picker.waitFor({ state: 'visible' });
+  assert.equal(await picker.locator('.device-option').count(), 2, 'Device selector must render all detected devices');
+  assert.equal(await picker.locator('.device-option:disabled').count(), 1, 'Offline devices must be shown but not selectable');
+  const popup = await picker.evaluate(el => {
+    const r = el.getBoundingClientRect(); const styles = getComputedStyle(el);
+    return { visible: r.width > 200 && r.height > 70, withinViewport: r.right <= innerWidth && r.left >= 0,
+             positioned: styles.position, background: styles.backgroundColor };
+  });
+  assert(popup.visible && popup.withinViewport, 'Styled dropdown must be visible and inside the viewport');
+  assert.equal(popup.positioned, 'absolute', 'Dropdown should render as a styled overlay');
+  await picker.getByRole('textbox', { name: '搜索设备序列号' }).fill('USB-TEST');
+  assert.equal(await picker.locator('.device-option').count(), 1, 'Device selector must support search');
+  await picker.getByRole('textbox', { name: '搜索设备序列号' }).press('Escape');
+  await picker.waitFor({ state: 'hidden' });
+  console.log('PASS styled device selector, search, offline state and escape key');
+
   const before = await page.locator('.app-root').evaluate(el => el.classList.contains('sidebar-closed'));
   await page.locator('.sidebar-toggle').click();
   await page.waitForFunction(value => document.querySelector('.app-root')?.classList.contains('sidebar-closed') !== value, before);
@@ -96,6 +122,9 @@ try {
 
   await page.locator('button.nav-item[title="应用管理"]').click();
   assert.equal((await page.locator('.page-content h1').textContent()).trim(), '应用管理');
+  await page.locator('.status-segments').getByRole('button', { name: '已停用' }).click();
+  assert.equal(await page.locator('.data-table tbody tr').count(), 0);
+  await page.locator('.status-segments').getByRole('button', { name: '全部' }).click();
   await page.locator('.search-input input').fill('com.example.one');
   await page.waitForTimeout(150);
   assert.equal(await page.locator('.data-table tbody tr').count(), 1);

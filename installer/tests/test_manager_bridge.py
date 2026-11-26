@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-DIR = Path(__file__).resolve().parents[1] / "manager"
+DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DIR))
 from bridge import DesktopBridge
 
@@ -22,7 +22,7 @@ class TestDesktopBridge(unittest.TestCase):
 
     def test_version_and_config(self):
         env = self.bridge.environment()
-        self.assertEqual(env["version"], "2.2.2")
+        self.assertEqual(env["version"], "2.3.0")
         self.assertIn("adb_found", env)
         self.assertTrue(Path(self.bridge.settings_file).parent.is_dir())
 

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @unittest.skipIf(os.name == "nt", "Linux installer checks run on Linux CI")
@@ -18,9 +18,9 @@ class TestLinuxInstaller(unittest.TestCase):
         root = Path(self.folder.name)
         self.install_dir = root / "installer"
         self.install_dir.mkdir()
-        shutil.copy2(ROOT / "installer" / "install_linux_mac.sh", self.install_dir / "install_linux_mac.sh")
-        shutil.copy2(ROOT / "installer" / "start.sh", self.install_dir / "start.sh")
-        shutil.copy2(ROOT / "installer" / "stop.sh", self.install_dir / "stop.sh")
+        shutil.copy2(ROOT / "web-console" / "deploy" / "install_linux_mac.sh", self.install_dir / "install_linux_mac.sh")
+        shutil.copy2(ROOT / "web-console" / "deploy" / "start.sh", self.install_dir / "start.sh")
+        shutil.copy2(ROOT / "web-console" / "deploy" / "stop.sh", self.install_dir / "stop.sh")
         (root / "VERSION").write_text("2.2.2\n")
         (root / "desktopd").write_bytes(b"ELF test only")
         self.bin_dir = root / "bin"

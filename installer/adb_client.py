@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 
 
 DATA_DIR = "/data/local/tmp/android-web-desktop"
@@ -171,6 +172,11 @@ class ADB:
         return self.shell(serial, "getprop", key).strip() if key else ""
 
     def device_info(self, serial: str) -> dict:
+        """Read properties in one ADB call and fetch network/version concurrently.
+
+        Previously this made eight sequential getprop subprocess calls, followed
+        by two further calls. Wireless ADB could make each one take seconds.
+        """
         props = {
             "manufacturer": "ro.product.manufacturer",
             "brand": "ro.product.brand",
@@ -181,23 +187,40 @@ class ADB:
             "build": "ro.build.display.id",
             "serial": "ro.serialno",
         }
+        def props_request() -> dict[str, str]:
+            output = self.shell(serial, "getprop", timeout=12)
+            lines = re.findall(r"^\[([^\]]+)\]: \[(.*)\]\s*$", output, re.MULTILINE)
+            mapping = dict(lines)
+            return {name: mapping.get(key, "未知") for name, key in props.items()}
+
+        def network_request() -> list[str]:
+            return parse_lan_ips(self.shell(serial, "ip", "-o", "-4", "addr", "show", timeout=9))
+
+        def version_request() -> str:
+            return self.shell(serial, "readlink", DATA_DIR + "/current", timeout=8).strip()
+
+        # Connections may be slower than the desktop UI, but Python bridge
+        # invocation happens off the UI thread and these calls can overlap.
         values = {"adb_serial": serial}
-        for name, key in props.items():
-            try:
-                values[name] = self.getprop(serial, key)
-            except ADBError:
-                values[name] = "未知"
-        try:
-            values["ips"] = parse_lan_ips(self.shell(serial, "ip", "-o", "-4", "addr", "show", timeout=9))
-        except ADBError:
-            values["ips"] = []
-        try:
-            current = self.shell(serial, "readlink", DATA_DIR + "/current", timeout=8).strip()
-        except ADBError:
-            current = ""
-        match = VERSION_RE.fullmatch(current)
-        values["installed_version"] = match.group(1) if match else None
-        values["install_status"] = "已安装" if match else "未安装"
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="ADBInfo") as pool:
+            futures = {
+                "props": pool.submit(props_request),
+                "ips": pool.submit(network_request),
+                "version": pool.submit(version_request),
+            }
+            for key, future in futures.items():
+                try:
+                    value = future.result()
+                except (ADBError, OSError, ValueError):
+                    value = {"props": {k: "未知" for k in props}, "ips": [], "version": ""}[key]
+                if key == "props":
+                    values.update(value)
+                elif key == "ips":
+                    values["ips"] = value
+                else:
+                    match = VERSION_RE.fullmatch(value)
+                    values["installed_version"] = match.group(1) if match else None
+        values["install_status"] = "已安装" if values["installed_version"] else "未安装"
         return values
 
     def packages(self, serial: str, system: bool = False) -> list[str]:

@@ -38,13 +38,19 @@ const current = ref<View>('overview')
 const collapsed = ref(false)
 const devices = ref<Device[]>([])
 const selected = ref('')
+const deviceMenuOpen = ref(false)
+const deviceSearch = ref('')
+const devicePickerRef = ref<HTMLElement | null>(null)
+const appsLoadedFor = ref('')
+let logPollBusy = false
+let quietScanBusy = false
 const info = ref<InfoData>({})
 const applications = ref<AndroidApp[]>([])
 const appSearch = ref('')
 const showSystem = ref(false)
 const activeOnly = ref<'all' | 'enabled' | 'disabled'>('all')
 const adbPath = ref('')
-const envVersion = ref('2.2.2')
+const envVersion = ref('2.3.0')
 const loading = ref('')
 const ready = ref(false)
 const error = ref('')
@@ -66,6 +72,10 @@ const preview = new URLSearchParams(window.location.search).has('preview')
 const onlineCount = computed(() => devices.value.filter(d => d.state === 'device').length)
 const selectedDevice = computed(() => devices.value.find(d => d.serial === selected.value))
 const selectedReady = computed(() => selectedDevice.value?.state === 'device')
+const availableDevices = computed(() => devices.value.filter(d =>
+  d.serial.toLowerCase().includes(deviceSearch.value.trim().toLowerCase()) ||
+  (d.detail || '').toLowerCase().includes(deviceSearch.value.trim().toLowerCase())
+))
 const modelName = computed(() => [info.value.brand, info.value.model].filter(Boolean).join(' ') || '未知设备')
 const installed = computed(() => Boolean(info.value.installed_version))
 const installedLabel = computed(() => installed.value ? 'v' + info.value.installed_version : '未部署')
@@ -108,7 +118,7 @@ async function work<T>(message: string, action: () => Promise<T>, done?: (result
   try {
     const response = await action()
     if (done) await done(response)
-    await getLogs()
+    if (current.value === 'logs' || current.value === 'overview') await getLogs()
   } catch (cause: any) {
     const msg = cause instanceof Error ? cause.message : String(cause)
     error.value = msg
@@ -119,8 +129,41 @@ async function work<T>(message: string, action: () => Promise<T>, done?: (result
   }
 }
 async function getLogs() {
-  if (preview || !ready.value) return
-  try { entries.value = await invoke<Entry[]>('get_logs') } catch { /* log endpoint may be offline */ }
+  if (preview || !ready.value || logPollBusy || document.visibilityState === 'hidden') return
+  logPollBusy = true
+  try {
+    const latest = await invoke<Entry[]>('get_logs')
+    const currentLast = entries.value.at(-1)
+    const nextLast = latest.at(-1)
+    if (latest.length !== entries.value.length ||
+        currentLast?.time !== nextLast?.time ||
+        currentLast?.message !== nextLast?.message) {
+      entries.value = latest
+    }
+  } catch { /* log endpoint may be offline */ }
+  finally { logPollBusy = false }
+}
+async function refreshDevicesQuietly() {
+  if (preview || !ready.value || loading.value || quietScanBusy ||
+      document.visibilityState === 'hidden') return
+  quietScanBusy = true
+  try {
+    const found = await invoke<Device[]>('list_devices')
+    const old = devices.value.map(d => d.serial + ':' + d.state).join('|')
+    const latest = found.map(d => d.serial + ':' + d.state).join('|')
+    if (old !== latest) {
+      devices.value = found
+      if (!found.some(d => d.serial === selected.value && d.state === 'device')) {
+        selected.value = ''
+        info.value = {}
+        applications.value = []
+        appsLoadedFor.value = ''
+        const first = found.find(d => d.state === 'device')
+        if (first) await loadDevice(first.serial)
+      }
+    }
+  } catch { /* disconnected ADB is handled by the manual refresh action */ }
+  finally { quietScanBusy = false }
 }
 async function clearLogs() {
   if (preview) { entries.value = []; return }
@@ -137,37 +180,75 @@ async function refreshDevices() {
       selected.value = response.find(d => d.state === 'device')?.serial || ''
       info.value = {}
       applications.value = []
+      appsLoadedFor.value = ''
     }
     if (selected.value) await loadDevice(selected.value)
     else showToast(response.length ? '已发现设备，请完成授权' : '没有发现 ADB 设备', 'info')
   })
 }
 async function loadDevice(serial: string) {
-  if (!serial) { selected.value = ''; info.value = {}; applications.value = []; return }
+  if (!serial) {
+    selected.value = ''; info.value = {}; applications.value = []; appsLoadedFor.value = ''
+    return
+  }
+  if (selected.value !== serial) {
+    applications.value = []
+    appsLoadedFor.value = ''
+  }
   selected.value = serial
   try {
-    info.value = await invoke<InfoData>('device_info', serial)
-    targetIp.value = info.value.ips?.[0] || ''
-    await loadApps()
+    const data = await invoke<InfoData>('device_info', serial)
+    if (selected.value !== serial) return
+    info.value = data
+    targetIp.value = data.ips?.[0] || ''
+    // Apps can take a long time on some firmware; fetch only when the user
+    // actually visits the applications page.
+    if (current.value === 'applications') await loadApps()
   } catch (cause: any) {
     logLocal('读取设备失败：' + String(cause), 'error')
     showToast('无法读取设备信息，请检查 ADB 授权', 'error')
   }
 }
-async function loadApps() {
+async function loadApps(force = false) {
   if (!selected.value || preview) return
+  const serial = selected.value
+  const system = showSystem.value
+  const key = serial + ':' + String(system)
+  if (!force && appsLoadedFor.value === key) return
   try {
-    applications.value = await invoke<AndroidApp[]>('list_apps', selected.value, showSystem.value)
+    const result = await invoke<AndroidApp[]>('list_apps', serial, system)
+    if (selected.value === serial && showSystem.value === system) {
+      applications.value = result
+      appsLoadedFor.value = key
+    }
   } catch (cause: any) {
     logLocal('获取应用列表失败：' + String(cause), 'error')
+    showToast('应用列表读取失败，可在应用页面重试', 'error')
   }
 }
 async function chooseDevice(serial: string) {
   if (loading.value) return
+  deviceMenuOpen.value = false
+  deviceSearch.value = ''
+  if (serial === selected.value) return
   await work('正在读取设备信息…', async () => {
     await loadDevice(serial)
     return true
   })
+}
+function closeDeviceMenu(event: PointerEvent) {
+  const target = event.target
+  if (deviceMenuOpen.value && target instanceof Node &&
+      !devicePickerRef.value?.contains(target)) {
+    deviceMenuOpen.value = false
+  }
+}
+function deviceMenuKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') { deviceMenuOpen.value = false; return }
+  if (event.key === 'Enter' && deviceMenuOpen.value && availableDevices.value.length) {
+    const first = availableDevices.value.find(d => d.state === 'device')
+    if (first) void chooseDevice(first.serial)
+  }
 }
 function requireDevice() {
   if (!selected.value || !selectedReady.value) { showToast('请先选择已授权且在线的设备', 'error'); return false }
@@ -317,7 +398,7 @@ async function copyText(value: string) {
 }
 function previewSetup() {
   ready.value = true
-  envVersion.value = '2.2.2'
+  envVersion.value = '2.3.0'
   adbPath.value = 'C:\\Android\\platform-tools\\adb.exe'
   devices.value = [{ serial: 'ZY22FQ7A9H', state: 'device', detail: 'usb:1-4 product:demo model:Pixel' },{ serial: '192.168.1.28:5555', state: 'offline' }]
   selected.value = 'ZY22FQ7A9H'
@@ -351,7 +432,10 @@ async function initialize() {
     if (bridgePoll) clearInterval(bridgePoll)
     if (result.adb_found) await refreshDevices()
     else showToast('尚未发现 ADB，可以在设置中下载官方工具', 'info')
-    timer = setInterval(() => { void getLogs() }, 2500)
+    timer = setInterval(() => {
+      if (current.value === 'logs' && !loading.value) void getLogs()
+      void refreshDevicesQuietly()
+    }, 15000)
   } catch (cause: any) { error.value = String(cause); ready.value = true }
   finally { initializing = false }
 }
@@ -360,17 +444,34 @@ onMounted(() => {
   void initialize()
   window.addEventListener('pywebviewready', initialize)
   bridgePoll = setInterval(() => { if (!initialized) void initialize() }, 250)
+  window.addEventListener('pointerdown', closeDeviceMenu)
 })
 onUnmounted(() => {
   if (bridgePoll) clearInterval(bridgePoll)
   window.removeEventListener('pywebviewready', initialize)
+  window.removeEventListener('pointerdown', closeDeviceMenu)
   if (timer) clearInterval(timer)
   if (noticeTimer) clearTimeout(noticeTimer)
 })
 watch(collapsed, v => {
   try { localStorage.setItem('awd-sidebar-collapsed', String(v)) } catch { /* ignored */ }
 })
-watch(showSystem, () => { if (!preview && selected.value) void work('正在筛选应用…', async () => { await loadApps(); return true }) })
+watch(current, page => {
+  deviceMenuOpen.value = false
+  if (preview) return
+  if (page === 'applications' && selected.value &&
+      appsLoadedFor.value !== selected.value + ':' + String(showSystem.value)) {
+    void work('正在读取设备应用…', () => loadApps())
+  } else if (page === 'logs') {
+    void getLogs()
+  }
+})
+watch(showSystem, () => {
+  appsLoadedFor.value = ''
+  if (!preview && selected.value && current.value === 'applications') {
+    void work('正在筛选应用…', () => loadApps(true))
+  }
+})
 </script>
 
 <template>
@@ -455,15 +556,46 @@ watch(showSystem, () => { if (!preview && selected.value) void work('正在筛�
             </p>
           </div>
           <div v-if="current !== 'settings' && current !== 'logs'" class="page-actions">
-            <div class="device-picker">
-              <Smartphone :size="16" />
-              <select v-model="selected" aria-label="选择设备" :disabled="!!loading" @change="chooseDevice(selected)">
-                <option value="">选择 Android 设备</option>
-                <option v-for="d in devices" :key="d.serial" :value="d.serial" :disabled="d.state !== 'device'">
-                  {{ d.serial }}{{ d.state === 'device' ? '' : ' · ' + d.state }}
-                </option>
-              </select>
-              <ChevronDown :size="14" />
+            <div ref="devicePickerRef" class="device-picker">
+              <button type="button" class="device-picker-trigger" aria-label="选择 Android 设备"
+                aria-haspopup="listbox" :aria-expanded="deviceMenuOpen"
+                :disabled="!!loading" @click="deviceMenuOpen = !deviceMenuOpen"
+                @keydown="deviceMenuKeydown">
+                <Smartphone :size="16" />
+                <span class="device-picker-label">{{ selectedDevice ? selectedDevice.serial : '选择 Android 设备' }}</span>
+                <ChevronDown :size="15" :class="{ 'chevron-open': deviceMenuOpen }" />
+              </button>
+              <div v-if="deviceMenuOpen" class="device-dropdown" role="group" aria-label="设备选择面板"
+                @keydown="deviceMenuKeydown">
+                <div class="device-dropdown-head">
+                  <span>已发现设备 <b>{{ devices.length }}</b></span>
+                  <span class="device-online-count">{{ onlineCount }} 台在线</span>
+                </div>
+                <div class="device-dropdown-search">
+                  <Search :size="15" />
+                  <input v-model="deviceSearch" aria-label="搜索设备序列号" placeholder="搜索设备或序列号…" />
+                </div>
+                <div class="device-dropdown-list" role="listbox" aria-label="可用设备">
+                  <button v-for="d in availableDevices" :key="d.serial" type="button"
+                    class="device-option" role="option" :aria-selected="selected === d.serial"
+                    :disabled="d.state !== 'device' || !!loading" @click="chooseDevice(d.serial)">
+                    <span class="device-option-icon"><Smartphone :size="16" /></span>
+                    <span class="device-option-copy"><strong>{{ d.serial }}</strong>
+                      <small>{{ d.state === 'device' ? '已连接 · 可管理' : d.state === 'unauthorized' ? '需要设备授权' : d.state === 'offline' ? '设备离线' : d.state }}</small>
+                    </span>
+                    <Check v-if="selected === d.serial" :size="16" class="device-selected-check" />
+                    <span v-else class="mini-dot" :class="d.state === 'device' ? 'green' : 'grey'"></span>
+                  </button>
+                  <div v-if="!availableDevices.length" class="device-option-empty">
+                    {{ devices.length ? '没有匹配的设备' : '还没有检测到设备，请点击刷新' }}
+                  </div>
+                </div>
+                <div class="device-dropdown-footer">
+                  <button type="button" @click="deviceMenuOpen = false; refreshDevices()">
+                    <RefreshCw :size="14" /> 重新检测设备
+                  </button>
+                </div>
+              </div>
             </div>
             <button class="btn btn-outline" type="button" :disabled="!!loading" @click="refreshDevices">
               <RefreshCw :size="16" /> 刷新
@@ -603,14 +735,18 @@ watch(showSystem, () => { if (!preview && selected.value) void work('正在筛�
           <section class="panel app-panel">
             <div class="panel-head"><div><h2>应用列表</h2><p>查询已安装的软件包与运行状态</p></div>
               <div class="button-row"><span class="tag tag-muted">{{ filteredApps.length }} 个应用</span>
-                <button class="btn btn-outline" :disabled="!selectedReady || !!loading" @click="loadApps"><RefreshCw :size="16" /> 刷新列表</button></div>
+                <button class="btn btn-outline" :disabled="!selectedReady || !!loading" @click="loadApps(true)"><RefreshCw :size="16" /> 刷新列表</button></div>
             </div>
             <div class="filters-row">
               <div class="search-input"><Search :size="17" /><input v-model="appSearch" placeholder="搜索应用包名…" aria-label="搜索应用" /></div>
               <button class="toggle" :class="{ enabled: showSystem }" @click="showSystem = !showSystem"><ListFilter :size="16" />{{ showSystem ? '系统应用' : '用户应用' }}</button>
-              <select v-model="activeOnly" class="select-control" aria-label="筛选状态">
-                <option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option>
-              </select>
+              <div class="status-segments" role="group" aria-label="筛选状态">
+                <button v-for="option in ([{ value: 'all', label: '全部' }, { value: 'enabled', label: '已启用' }, { value: 'disabled', label: '已停用' }] as const)"
+                  :key="option.value" type="button" :class="{ active: activeOnly === option.value }"
+                  :aria-pressed="activeOnly === option.value" @click="activeOnly = option.value">
+                  {{ option.label }}
+                </button>
+              </div>
             </div>
             <div class="table-wrap">
               <table class="data-table"><thead><tr><th>软件包名</th><th>类型</th><th>状态</th><th class="align-right">管理</th></tr></thead>

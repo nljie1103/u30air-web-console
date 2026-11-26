@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-MANAGER_DIR = Path(__file__).resolve().parents[1] / "manager"
+MANAGER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MANAGER_DIR))
 from local_server import start_frontend_server
 

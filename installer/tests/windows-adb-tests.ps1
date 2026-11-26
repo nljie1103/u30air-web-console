@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$scriptPath = (Resolve-Path "$PSScriptRoot/../installer/install_windows.ps1").Path
+$scriptPath = (Resolve-Path "$PSScriptRoot/../../web-console/deploy/install_windows.ps1").Path
 $bytes = [System.IO.File]::ReadAllBytes($scriptPath)
 if ($bytes.Length -lt 4 -or $bytes[0] -ne 239 -or $bytes[1] -ne 187 -or $bytes[2] -ne 191) {
   throw "PowerShell 5.1 install script must use UTF-8 BOM."
@@ -65,7 +65,7 @@ Check "connected" $true "192.168.1.20:5555" @("-ConnectAddress","192.168.1.20:55
 Write-Host "Windows PowerShell 5.1 parser and ADB diagnostics passed."
 
 # Exercise the entire installer path with a simulated authorized device.
-$root = Resolve-Path "$PSScriptRoot/.."
+$root = Resolve-Path "$PSScriptRoot/../../web-console"
 $versionFile = Join-Path $root "VERSION"
 $binaryFile = Join-Path $root "desktopd"
 try {
