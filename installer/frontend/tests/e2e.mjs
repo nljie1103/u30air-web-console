@@ -68,7 +68,7 @@ try {
     };
     window.pywebview = {
       api: {
-        environment: track('environment', { version: '2.3.0', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
+        environment: track('environment', { version: '2.3.1', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
         list_devices: track('list_devices', [
           { serial: 'USB-TEST-001', state: 'device', detail: 'mock device' },
           { serial: '192.168.1.28:5555', state: 'offline', detail: 'unreachable' },
@@ -145,6 +145,132 @@ try {
   }
   assert.deepEqual(failures, [], 'Unexpected frontend JavaScript exception');
   console.log('PASS Vue DOM navigation and mocked Python API contract');
+  // Regression: on a cold WebView2 launch, window.pywebview.api can exist
+  // before pywebview injects all its callable methods.
+  const delayedPage = await browser.newPage({ viewport: { width: 1300, height: 820 } });
+  const coldErrors = [];
+  delayedPage.on('pageerror', e => coldErrors.push(e.message));
+  await delayedPage.addInitScript(() => {
+    window.pywebview = { api: {} };
+    setTimeout(() => {
+      Object.assign(window.pywebview.api, {
+        environment: async () => ({ version: '2.3.1', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
+        list_devices: async () => [{ serial: 'USB-DELAYED', state: 'device' }],
+        get_logs: async () => [],
+        device_info: async () => ({ brand: 'Google', model: 'Delayed Mock', android: '16', ips: [], installed_version: null }),
+      });
+    }, 1100);
+  });
+  await delayedPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+  await delayedPage.locator('.startup-notice').waitFor({ state: 'visible' });
+  assert.equal(await delayedPage.locator('.inline-error').count(), 0, 'Partial API must not produce red TypeError');
+  await delayedPage.locator('button.nav-item[title="设置"]').click();
+  assert.equal((await delayedPage.locator('.page-content h1').textContent()).trim(), '设置');
+  await delayedPage.locator('.startup-notice').waitFor({ state: 'hidden', timeout: 8000 });
+  await delayedPage.locator('button.nav-item[title="工作台"]').click();
+  await delayedPage.getByText('Delayed Mock', { exact: true }).first().waitFor({ state: 'visible', timeout: 10000 });
+  assert.equal(await delayedPage.locator('.inline-error').count(), 0);
+  assert.deepEqual(coldErrors, [], 'Partial bridge injection must not cause unhandled JS exceptions');
+  console.log('PASS cold-launch partial API injection, retry and navigation');
+  await delayedPage.close();
+
+  // Regression: environment() can fail once during bridge initialization.
+  const transientPage = await browser.newPage({ viewport: { width: 1300, height: 820 } });
+  const transientErrors = [];
+  transientPage.on('pageerror', e => transientErrors.push(e.message));
+  await transientPage.addInitScript(() => {
+    let calls = 0;
+    window.pywebview = { api: {
+      environment: async () => {
+        if (++calls === 1) throw new Error('temporary initialization error');
+        return { version: '2.3.1', adb_found: false, adb_path: '' };
+      },
+      list_devices: async () => [],
+      get_logs: async () => [],
+    }};
+    window.__getInitCalls = () => calls;
+  });
+  await transientPage.goto(url, { waitUntil: 'domcontentloaded' });
+  await transientPage.locator('.startup-notice').waitFor({ state: 'hidden', timeout: 8000 });
+  assert((await transientPage.evaluate(() => window.__getInitCalls())) >= 2, 'Environment should be retried');
+  assert.equal(await transientPage.locator('.inline-error').count(), 0, 'Transient startup error must not be fatal');
+  assert.deepEqual(transientErrors, []);
+  console.log('PASS transient environment failure, self-recovery');
+  await transientPage.close();
+
+  // ADB can take several seconds, but UI navigation must be independent.
+  const slowPage = await browser.newPage({ viewport: { width: 1300, height: 820 } });
+  await slowPage.addInitScript(() => {
+    window.pywebview = { api: {
+      environment: async () => ({ version: '2.3.1', adb_found: true, adb_path: 'C:\\tools\\adb.exe' }),
+      get_logs: async () => [],
+      list_devices: async () => new Promise(resolve => setTimeout(() => resolve([{ serial: 'SLOW-ADB', state: 'device' }]), 2600)),
+      device_info: async () => new Promise(resolve => setTimeout(() => resolve({ brand: 'Mock', model: 'Slow USB', android: '14', ips: [] }), 1200)),
+    }};
+  });
+  await slowPage.goto(url, { waitUntil: 'domcontentloaded' });
+  await slowPage.locator('.startup-notice').waitFor({ state: 'hidden', timeout: 5000 });
+  const navStart = Date.now();
+  for (const label of ['设备管理', '应用管理', '部署与更新', '运行日志', '设置']) {
+    await slowPage.locator('button.nav-item[title="' + label + '"]').click();
+    assert.equal((await slowPage.locator('.page-content h1').textContent()).trim(), label);
+  }
+  assert(Date.now() - navStart < 1500, 'Multiple page switches must not wait for long ADB calls');
+  await slowPage.locator('button.nav-item[title="工作台"]').click();
+  await slowPage.getByText('Slow USB', { exact: true }).first().waitFor({ state: 'visible', timeout: 10000 });
+  assert.equal(await slowPage.locator('.inline-error').count(), 0);
+  console.log('PASS slow ADB scan leaves navigation responsive');
+  await slowPage.close();
+
+  // An unavailable backend method must fail with an actionable description,
+  // never a minified "x(...)[i] is not a function" crash.
+  const missingPage = await browser.newPage({ viewport: { width: 1300, height: 820 } });
+  await missingPage.addInitScript(() => {
+    window.pywebview = { api: {
+      environment: async () => ({ version: '2.3.1', adb_found: false, adb_path: '' }),
+      list_devices: async () => [], get_logs: async () => [],
+    }};
+  });
+  await missingPage.goto(url, { waitUntil: 'domcontentloaded' });
+  await missingPage.locator('.startup-notice').waitFor({ state: 'hidden', timeout: 5000 });
+  await missingPage.locator('button.nav-item[title="设置"]').click();
+  await missingPage.getByRole('button', { name: '选择 adb.exe' }).click();
+  await missingPage.locator('.inline-error').getByText('尚未就绪', { exact: false }).waitFor({ state: 'visible' });
+  const msg = await missingPage.locator('.inline-error').innerText();
+  assert(!msg.includes('is not a function'), 'No raw JS TypeError should reach UI');
+  await missingPage.locator('button.nav-item[title="工作台"]').click();
+  assert.equal((await missingPage.locator('.page-content h1').textContent()).trim(), '工作台');
+  console.log('PASS incomplete backend API reports readable error without freezing navigation');
+  await missingPage.close();
+
+  // The native environment() Promise may never settle on a broken first
+  // attempt. The handshake must time out and recover automatically.
+  const hangingPage = await browser.newPage({ viewport: { width: 1300, height: 820 } });
+  const hangingErrors = [];
+  hangingPage.on('pageerror', e => hangingErrors.push(e.message));
+  await hangingPage.addInitScript(() => {
+    let calls = 0;
+    window.pywebview = { api: {
+      environment: () => {
+        if (++calls === 1) return new Promise(() => {});
+        return Promise.resolve({ version: '2.3.1', adb_found: false, adb_path: '' });
+      },
+      list_devices: async () => [],
+      get_logs: async () => [],
+    }};
+    window.__handshakeCalls = () => calls;
+  });
+  await hangingPage.goto(url, { waitUntil: 'domcontentloaded' });
+  await hangingPage.locator('.startup-notice').waitFor({ state: 'visible' });
+  await hangingPage.locator('button.nav-item[title="部署与更新"]').click();
+  assert.equal((await hangingPage.locator('.page-content h1').textContent()).trim(), '部署与更新');
+  await hangingPage.locator('.startup-notice').waitFor({ state: 'hidden', timeout: 10000 });
+  assert((await hangingPage.evaluate(() => window.__handshakeCalls())) >= 2, 'Hung handshake must be retried');
+  assert.equal(await hangingPage.locator('.inline-error').count(), 0);
+  assert.deepEqual(hangingErrors, []);
+  console.log('PASS hung first bridge call times out and retries without freezing UI');
+  await hangingPage.close();
+
   console.log('BROWSER_E2E_OK');
 } finally {
   if (browser) await browser.close();

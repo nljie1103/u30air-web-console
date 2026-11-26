@@ -44,15 +44,20 @@ const devicePickerRef = ref<HTMLElement | null>(null)
 const appsLoadedFor = ref('')
 let logPollBusy = false
 let quietScanBusy = false
+let infoGeneration = 0
+let initFailureCount = 0
 const info = ref<InfoData>({})
 const applications = ref<AndroidApp[]>([])
 const appSearch = ref('')
 const showSystem = ref(false)
 const activeOnly = ref<'all' | 'enabled' | 'disabled'>('all')
 const adbPath = ref('')
-const envVersion = ref('2.3.0')
+const envVersion = ref('2.3.1')
 const loading = ref('')
+const scanning = ref(false)
+const deviceLoading = ref(false)
 const ready = ref(false)
+const startupSlow = ref(false)
 const error = ref('')
 const entries = ref<Entry[]>([])
 const release = ref<any>(null)
@@ -67,6 +72,7 @@ let timer: ReturnType<typeof setInterval> | undefined
 let initialized = false
 let initializing = false
 let bridgePoll: ReturnType<typeof setInterval> | undefined
+let startupTimeout: ReturnType<typeof setTimeout> | undefined
 const preview = new URLSearchParams(window.location.search).has('preview')
 
 const onlineCount = computed(() => devices.value.filter(d => d.state === 'device').length)
@@ -87,7 +93,6 @@ const filteredApps = computed(() => {
       (activeOnly.value === 'disabled' && a.disabled)),
   )
 })
-const activePage = computed(() => views.find(v => v.id === current.value)!)
 const preferredIp = computed(() => targetIp.value || info.value.ips?.[0] || '')
 const bodyTitle = computed(() => ({
   overview: '工作台', devices: '设备管理', applications: '应用管理', deployment: '部署与更新',
@@ -103,13 +108,21 @@ function logLocal(message: string, level = 'info') {
   entries.value.push({ time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), message, level })
   if (entries.value.length > 300) entries.value.shift()
 }
-function backend() {
+const INITIAL_API_METHODS = ['environment', 'list_devices', 'get_logs'] as const
+
+function bridgeMethodsReady(): boolean {
   const api = window.pywebview?.api
-  if (!api) throw new Error('请从 Windows 管理器 EXE 启动此页面')
-  return api
+  return Boolean(api && INITIAL_API_METHODS.every(name => typeof api[name] === 'function'))
 }
 async function invoke<T = any>(method: string, ...args: any[]): Promise<T> {
-  return await backend()[method](...args)
+  const api = window.pywebview?.api
+  const fn = api?.[method]
+  // pywebview can publish its API object before every function has been
+  // injected into WebView2. An absent method is NOT a function to call.
+  if (typeof fn !== 'function') {
+    throw new Error('Windows 管理接口「' + method + '」尚未就绪，请稍后重试')
+  }
+  return await fn.apply(api, args) as T
 }
 async function work<T>(message: string, action: () => Promise<T>, done?: (result: T) => Promise<void> | void) {
   if (loading.value) { showToast('已有任务正在执行', 'info'); return }
@@ -144,7 +157,7 @@ async function getLogs() {
   finally { logPollBusy = false }
 }
 async function refreshDevicesQuietly() {
-  if (preview || !ready.value || loading.value || quietScanBusy ||
+  if (preview || !ready.value || loading.value || scanning.value || quietScanBusy ||
       document.visibilityState === 'hidden') return
   quietScanBusy = true
   try {
@@ -154,6 +167,14 @@ async function refreshDevicesQuietly() {
     if (old !== latest) {
       devices.value = found
       if (!found.some(d => d.serial === selected.value && d.state === 'device')) {
+        ++infoGeneration
+        deviceLoading.value = false
+        ++infoGeneration
+        deviceLoading.value = false
+        ++infoGeneration
+        deviceLoading.value = false
+        ++infoGeneration
+        deviceLoading.value = false
         selected.value = ''
         info.value = {}
         applications.value = []
@@ -172,23 +193,39 @@ async function clearLogs() {
     showToast('当前会话日志已清空')
   })
 }
-async function refreshDevices() {
-  if (preview) return
-  await work('正在扫描 Android 设备…', async () => await invoke<Device[]>('list_devices'), async response => {
+async function scanDevices(silent = false) {
+  if (preview || !ready.value || scanning.value) return
+  scanning.value = true
+  try {
+    const response = await invoke<Device[]>('list_devices')
     devices.value = response
-    if (!response.some(d => d.serial === selected.value && d.state === 'device')) {
-      selected.value = response.find(d => d.state === 'device')?.serial || ''
+    const stillOnline = response.some(d => d.serial === selected.value && d.state === 'device')
+    if (!stillOnline) {
+      ++infoGeneration
+      deviceLoading.value = false
+      selected.value = ''
       info.value = {}
       applications.value = []
       appsLoadedFor.value = ''
     }
-    if (selected.value) await loadDevice(selected.value)
-    else showToast(response.length ? '已发现设备，请完成授权' : '没有发现 ADB 设备', 'info')
-  })
+    const next = stillOnline ? selected.value : (response.find(d => d.state === 'device')?.serial || '')
+    if (next) void loadDevice(next)
+    else if (!silent) showToast(response.length ? '检测到设备，请在 Android 上完成 ADB 授权' : '暂未检测到已连接设备', 'info')
+  } catch (cause: any) {
+    // ADB may be starting or missing during first launch. Do not block the UI.
+    const msg = cause instanceof Error ? cause.message : String(cause)
+    logLocal('设备扫描失败：' + msg, 'error')
+    if (!silent) showToast(msg, 'error')
+  } finally {
+    scanning.value = false
+  }
 }
+async function refreshDevices() { await scanDevices(false) }
 async function loadDevice(serial: string) {
+  const request = ++infoGeneration
   if (!serial) {
     selected.value = ''; info.value = {}; applications.value = []; appsLoadedFor.value = ''
+    deviceLoading.value = false
     return
   }
   if (selected.value !== serial) {
@@ -196,17 +233,20 @@ async function loadDevice(serial: string) {
     appsLoadedFor.value = ''
   }
   selected.value = serial
+  deviceLoading.value = true
   try {
     const data = await invoke<InfoData>('device_info', serial)
-    if (selected.value !== serial) return
+    if (selected.value !== serial || request !== infoGeneration) return
     info.value = data
     targetIp.value = data.ips?.[0] || ''
-    // Apps can take a long time on some firmware; fetch only when the user
-    // actually visits the applications page.
-    if (current.value === 'applications') await loadApps()
+    if (current.value === 'applications') void loadApps()
   } catch (cause: any) {
-    logLocal('读取设备失败：' + String(cause), 'error')
-    showToast('无法读取设备信息，请检查 ADB 授权', 'error')
+    if (request === infoGeneration) {
+      logLocal('读取设备失败：' + String(cause), 'error')
+      showToast('无法读取设备信息，请检查 ADB 授权', 'error')
+    }
+  } finally {
+    if (request === infoGeneration) deviceLoading.value = false
   }
 }
 async function loadApps(force = false) {
@@ -231,10 +271,7 @@ async function chooseDevice(serial: string) {
   deviceMenuOpen.value = false
   deviceSearch.value = ''
   if (serial === selected.value) return
-  await work('正在读取设备信息…', async () => {
-    await loadDevice(serial)
-    return true
-  })
+  await loadDevice(serial)
 }
 function closeDeviceMenu(event: PointerEvent) {
   const target = event.target
@@ -398,7 +435,7 @@ async function copyText(value: string) {
 }
 function previewSetup() {
   ready.value = true
-  envVersion.value = '2.3.0'
+  envVersion.value = '2.3.1'
   adbPath.value = 'C:\\Android\\platform-tools\\adb.exe'
   devices.value = [{ serial: 'ZY22FQ7A9H', state: 'device', detail: 'usb:1-4 product:demo model:Pixel' },{ serial: '192.168.1.28:5555', state: 'offline' }]
   selected.value = 'ZY22FQ7A9H'
@@ -420,34 +457,57 @@ function previewSetup() {
 async function initialize() {
   if (initialized) return
   if (preview) { initialized = true; previewSetup(); return }
-  if (!window.pywebview?.api) return
-  if (initializing) return
+  // The pywebviewready event and API method injection are not necessarily
+  // simultaneous on cold WebView2 launches.
+  if (initializing || !bridgeMethodsReady()) return
   initializing = true
   try {
-    const result = await invoke<any>('environment')
+    // A first WebView2 bridge call may never resolve if the native side is
+    // still initializing. Bound the handshake so the retry loop cannot stall.
+    let handshakeTimer: ReturnType<typeof setTimeout> | undefined
+    let result: any
+    try {
+      result = await Promise.race([
+        invoke<any>('environment'),
+        new Promise<never>((_, reject) => {
+          handshakeTimer = setTimeout(() => reject(new Error('管理接口初始化响应超时')), 5000)
+        }),
+      ])
+    } finally {
+      if (handshakeTimer) clearTimeout(handshakeTimer)
+    }
+    if (!result || typeof result.version !== 'string') throw new Error('本机管理接口返回无效信息')
     envVersion.value = result.version
-    adbPath.value = result.adb_path
+    adbPath.value = result.adb_path || ''
     ready.value = true
+    startupSlow.value = false
     initialized = true
+    initFailureCount = 0
     if (bridgePoll) clearInterval(bridgePoll)
-    if (result.adb_found) await refreshDevices()
+    // Never await ADB on the startup path; navigating between pages must remain responsive.
+    if (result.adb_found) void scanDevices(true)
     else showToast('尚未发现 ADB，可以在设置中下载官方工具', 'info')
     timer = setInterval(() => {
       if (current.value === 'logs' && !loading.value) void getLogs()
       void refreshDevicesQuietly()
     }, 15000)
-  } catch (cause: any) { error.value = String(cause); ready.value = true }
-  finally { initializing = false }
+  } catch (cause: any) {
+    // Transient startup errors are retried, not displayed as a fatal red banner.
+    initFailureCount++
+    if (initFailureCount === 5) logLocal('管理服务正在初始化，自动重试连接', 'info')
+  } finally { initializing = false }
 }
 onMounted(() => {
   try { collapsed.value = localStorage.getItem('awd-sidebar-collapsed') === 'true' } catch { /* ignored */ }
   void initialize()
   window.addEventListener('pywebviewready', initialize)
-  bridgePoll = setInterval(() => { if (!initialized) void initialize() }, 250)
+  bridgePoll = setInterval(() => { if (!initialized) void initialize() }, 400)
+  startupTimeout = setTimeout(() => { if (!ready.value) startupSlow.value = true }, 12000)
   window.addEventListener('pointerdown', closeDeviceMenu)
 })
 onUnmounted(() => {
   if (bridgePoll) clearInterval(bridgePoll)
+  if (startupTimeout) clearTimeout(startupTimeout)
   window.removeEventListener('pywebviewready', initialize)
   window.removeEventListener('pointerdown', closeDeviceMenu)
   if (timer) clearInterval(timer)
@@ -534,8 +594,8 @@ watch(showSystem, () => {
           <div class="status-pill"><span class="status-dot" :class="onlineCount > 0 ? 'online' : 'offline'"></span>
             {{ onlineCount > 0 ? onlineCount + ' 台设备在线' : '未连接设备' }}
           </div>
-          <button class="icon-button" type="button" :disabled="!!loading" title="刷新设备" aria-label="刷新设备" @click="refreshDevices">
-            <RefreshCw :size="17" :class="{ spin: loading.includes('扫描') }" />
+          <button class="icon-button" type="button" :disabled="!!loading || scanning" title="刷新设备" aria-label="刷新设备" @click="refreshDevices">
+            <RefreshCw :size="17" :class="{ spin: scanning }" />
           </button>
           <span class="top-avatar">A</span>
         </div>
@@ -601,6 +661,12 @@ watch(showSystem, () => {
               <RefreshCw :size="16" /> 刷新
             </button>
           </div>
+        </div>
+
+        <div v-if="!ready && !preview" class="startup-notice" role="status">
+          <LoaderCircle :size="16" class="spin" />
+          <span>{{ startupSlow ? 'Windows 管理接口仍未连接成功；可点击重试，其他页面仍可切换。' : '正在连接 Windows 本机管理服务，侧边栏仍可正常切换…' }}</span>
+          <button type="button" @click="initialize">重试连接</button>
         </div>
 
         <div v-if="error && !infoDismissed" class="inline-error" role="alert">
@@ -850,6 +916,8 @@ watch(showSystem, () => {
         <footer class="page-footer">
           <span>Android Web Desktop · Device Manager</span>
           <span v-if="loading" class="loading-flag"><LoaderCircle :size="14" class="spin" />{{ loading }}</span>
+          <span v-else-if="scanning" class="loading-flag"><LoaderCircle :size="14" class="spin" />后台扫描设备中</span>
+          <span v-else-if="deviceLoading" class="loading-flag"><LoaderCircle :size="14" class="spin" />读取设备信息中</span>
           <span v-else>本地运行 · 安全操作</span>
         </footer>
       </main>

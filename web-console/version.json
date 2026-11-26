@@ -1,5 +1,5 @@
 {
-  "version": "2.3.0",
-  "title": "Windows管理器性能与设备选择界面优化",
-  "notes": "### Windows 管理器\n- 设备信息改为批量读取 Android 系统属性，并行获取 IP 和安装版本，减少无线 ADB 请求延迟。\n- 应用列表改为按需加载，减少启动时的阻塞操作，日志更新减少无用重复请求。\n- 设备选择器重做为可搜索的 shadcn 风格弹出列表，明确显示在线、未授权和离线状态。\n- 应用状态筛选改成统一风格按钮组，避免 Windows WebView2 原生下拉控件显示不一致。\n- 新增避免每次冷启动解包的 Windows 便携版 ZIP，同时保留独立 EXE。\n\n### 源码与维护\n- 仓库根目录整理为 installer（Windows 管理器）和 web-console（Android 服务）。\n- 组件测试与部署脚本归属各自目录，更新 GitHub Actions 构建路径。\n- Android ARM64 ZIP 内的 installer 脚本目录保持兼容。\n\n### 验证说明\n- 模拟 ADB 性能测试、Vue/Edge 交互测试和 Windows EXE 打包验证由 CI 执行；设备端真机兼容性仍需单独验证。"
+  "version": "2.3.1",
+  "title": "修复了Windows管理器首次启动报错与界面卡顿",
+  "notes": "### Windows 管理器修复\n- 修复首次启动时 WebView2 的 Python API 对象已存在、方法尚未注入导致 TypeError: … is not a function 的问题。\n- 接口未准备好时显示友好的初始化状态；不会再把瞬时注入失败作为首页红色致命错误。\n- 启动握手设定 5 秒超时并自动重试，避免第一次接口调用不返回时界面一直处于等待状态。\n- Android 设备扫描、设备属性读取与首页初始化解耦；后台扫描期间仍可切换侧边栏页面。\n- 设备重新连接或快速切换时忽略过期请求，防止旧设备信息覆盖当前选择。\n\n### 回归测试\n- 新增 API 方法延迟注入、首次调用失败、调用永不返回及 API 方法缺失等浏览器自动测试。\n- 测试在慢速 ADB 扫描期间连续切换多个侧边栏页面，验证操作响应及错误提示。\n- Windows 便携版和单文件 EXE 均保留，统一通过 Edge/Vue 交互及 Windows 构建检查。"
 }

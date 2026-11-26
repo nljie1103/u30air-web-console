@@ -130,7 +130,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o desktopd .
 
 ## 🔧 故障排查与反馈
 
-Windows 界面设备下拉菜单会列出检测到的在线、未授权和离线设备；首次连接检查 `adb devices -l` 的结果。应用列表只在进入“应用管理”时加载，以减少启动时的额外 ADB 调用。操作详情可以在运行日志中查看。
+Windows 界面设备下拉菜单会列出检测到的在线、未授权和离线设备；首次连接检查 `adb devices -l` 的结果。应用列表只在进入“应用管理”时加载，以减少启动时的额外 ADB 调用。 Windows 管理器首次启动会等待 WebView2 的 Python 方法注入完成；连接尚未就绪时会自动重试而不会锁定侧边栏。操作详情可以在运行日志中查看。
 
 应用为设备端部署提供健康检查：安装后通过临时 ADB 转发确认正确版本确实启动并监听；异常时尝试恢复此前版本。设备上的服务默认保存到 `/data/local/tmp/android-web-desktop`，图形管理器的一键卸载会清理该项目目录。
 

@@ -324,3 +324,11 @@ h1 { font-size: 26px; line-height: 1.18; letter-spacing: -.9px; color: #1d2737; 
 .status-segments { display: flex; align-items: center; gap: 2px; padding: 3px; background: #f3f5f8; border: 1px solid #e8ecf2; border-radius: 9px; }
 .status-segments button { border: 0; border-radius: 6px; padding: 7px 9px; background: transparent; color: #798699; font-size: 10.8px; white-space: nowrap; }
 .status-segments button.active { color: #2e4158; background: #fff; box-shadow: 0 1px 3px #19243817; font-weight: 690; }
+.startup-notice {
+  display: flex; align-items: center; gap: 10px; padding: 12px 15px;
+  margin-bottom: 17px; border: 1px solid #dbe8f5; border-radius: 9px;
+  background: #f4f8fc; color: #536d8a; font-size: 11.5px;
+}
+.startup-notice span { flex: 1; }
+.startup-notice button { border: 0; background: transparent; color: #426d9c; font-weight: 700; padding: 4px 6px; }
+.startup-notice button:hover { text-decoration: underline; }
