@@ -37,7 +37,7 @@ class DesktopBridge:
         self.settings = self._load_settings()
         saved = self.settings.get("adb_path", "")
         self.adb_path = Path(saved) if saved and Path(saved).is_file() else locate_adb()
-        self.version = "2.4.0"
+        self.version = "2.4.1"
 
     def _load_settings(self) -> dict:
         try:

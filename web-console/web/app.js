@@ -29,6 +29,13 @@ if(login){
  };
  const screen=byId('screen'),empty=byId('emptyState');
  let refreshing=false,frameUrl='',startPoint=null,apps=[],availableVersion='';
+ const appDetails=new Map();
+ let detailsGeneration=0, renderQueued=false;
+ function scheduleAppsRender(){
+  if(renderQueued)return;
+  renderQueued=true;
+  setTimeout(()=>{renderQueued=false;renderApps()},180);
+ }
  const say=(msg)=>{byId('frameStatus').textContent=msg};
  async function status(){
   try{
@@ -91,21 +98,74 @@ if(login){
  function renderApps(){
   const container=byId('appList');container.replaceChildren();
   const match=byId('searchApps').value.trim().toLowerCase();
-  const visible=apps.filter(v=>v.toLowerCase().includes(match));
+  const visible=apps.filter(pkg=>{
+   const label=appDetails.get(pkg)?.label||pkg;
+   return pkg.toLowerCase().includes(match)||label.toLowerCase().includes(match);
+  });
   byId('appCount').textContent=apps.length+' 个';
-  if(!visible.length){const el=document.createElement('div');el.className='muted';el.textContent=apps.length?'没有匹配的应用':'未检测到用户安装的应用';container.append(el);return;}
+  if(!visible.length){
+   const el=document.createElement('div');el.className='muted';
+   el.textContent=apps.length?'没有匹配的应用':'未检测到用户安装的应用';
+   container.append(el);return;
+  }
   for(const pkg of visible){
+   const meta=appDetails.get(pkg);
+   const label=meta?.label||pkg;
    const b=document.createElement('button');b.className='app-item';
-   const icon=document.createElement('span');icon.className='app-avatar';icon.textContent=pkg.replace(/^com\./,'').slice(0,1).toUpperCase();
-   const title=document.createElement('span');title.textContent=pkg;
-   b.append(icon,title);
-   b.addEventListener('click',async()=>{if(await control('launch',{package:pkg}))toast('已发送启动命令：'+pkg);});
+   b.type='button';b.title='打开 '+label;b.setAttribute('aria-label','打开 '+label);
+   const icon=document.createElement('span');icon.className='app-avatar';
+   icon.textContent=label.slice(0,1).toUpperCase();
+   if(meta?.hasIcon){
+    const img=document.createElement('img');
+    img.className='app-icon';img.alt='';img.loading='lazy';
+    img.src='/api/app-icon?package='+encodeURIComponent(pkg);
+    img.onerror=()=>{img.remove();icon.textContent=label.slice(0,1).toUpperCase();};
+    icon.replaceChildren(img);
+   }
+   const copy=document.createElement('span');copy.className='app-copy';
+   const title=document.createElement('strong');title.className='app-title';title.textContent=label;
+   copy.append(title);
+   if(label!==pkg){
+    const sub=document.createElement('small');sub.className='app-package';sub.textContent=pkg;
+    copy.append(sub);
+   }
+   b.append(icon,copy);
+   b.addEventListener('click',async()=>{
+    if(await control('launch',{package:pkg}))toast('已发送启动命令：'+label);
+   });
    container.append(b);
   }
  }
+ async function enrichApps(list){
+  const generation=++detailsGeneration;
+  let pos=0;
+  await Promise.all(Array.from({length:3},async()=>{
+   while(generation===detailsGeneration){
+    const pkg=list[pos++];
+    if(!pkg)return;
+    if(appDetails.has(pkg))continue;
+    try{
+     const meta=await api('/api/app-info?package='+encodeURIComponent(pkg));
+     if(generation!==detailsGeneration)return;
+     if(meta.package===pkg){
+      appDetails.set(pkg,meta);
+      scheduleAppsRender();
+     }
+    }catch{
+     // Some APK files or labels may not be accessible as the shell user.
+     // Preserve the existing package-name listing as a safe fallback.
+    }
+   }
+  }));
+ }
  async function loadApps(){
-  try{const r=await api('/api/apps');apps=r.packages||[];renderApps();}
-  catch(err){byId('appList').textContent='应用列表不可用';}
+  try{
+   const r=await api('/api/apps');
+   apps=(r.packages||[]).filter(pkg=>typeof pkg==='string');
+   renderApps();void enrichApps(apps);
+  }catch(err){
+   byId('appList').textContent='应用列表不可用：'+err.message;
+  }
  }
  byId('searchApps').addEventListener('input',renderApps);
  byId('vncLink').href='http://'+location.hostname+':5800/vnc.html';

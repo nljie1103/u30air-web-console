@@ -67,7 +67,7 @@ func TestProtectedRoutesAndLogin(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w
 	}
-	for _, p := range []string{"/api/status", "/api/apps", "/api/screen", "/api/update/check"} {
+	for _, p := range []string{"/api/status", "/api/apps", "/api/screen", "/api/app-info?package=com.example.app", "/api/app-icon?package=com.example.app", "/api/update/check"} {
 		if got := request("GET", p, false, "", "").Code; got != 401 {
 			t.Fatalf("%s should reject guest, got %d", p, got)
 		}
@@ -75,6 +75,13 @@ func TestProtectedRoutesAndLogin(t *testing.T) {
 	if got := request("POST", "/api/control", false, "", "{}").Code; got != 403 {
 		t.Fatalf("control unauthorized: %d", got)
 	}
+	if got := request("GET", "/api/app-info?package=bad%3Bcommand", true, "", "").Code; got != 400 {
+		t.Fatalf("invalid APK metadata query should fail: %d", got)
+	}
+	if got := request("GET", "/api/app-icon?package=bad%2Fpath", true, "", "").Code; got != 400 {
+		t.Fatalf("invalid APK icon path should fail: %d", got)
+	}
+
 	if got := request("POST", "/api/control", true, "http://evil.local", "{}").Code; got != 403 {
 		t.Fatalf("origin bypass: %d", got)
 	}

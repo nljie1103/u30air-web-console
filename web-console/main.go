@@ -42,6 +42,7 @@ type app struct {
 	httpClient *http.Client
 	updater    sync.Mutex
 	updating   bool
+	metadata   metadataStore
 }
 
 func randomBytes(n int) []byte {
@@ -241,6 +242,54 @@ func (a *app) handler() http.Handler {
 		}
 		respond(w, 200, map[string]any{"packages": installedApps(r.Context())})
 	})
+	// APK label/icon metadata is loaded lazily, after the lightweight app list.
+	// Access is restricted to authenticated users; no external icon provider.
+	mux.HandleFunc("/api/app-info", func(w http.ResponseWriter, r *http.Request) {
+		if !a.authed(r) {
+			fail(w, 401, "login required")
+			return
+		}
+		if r.Method != "GET" {
+			fail(w, 405, "method not allowed")
+			return
+		}
+		pkg := r.URL.Query().Get("package")
+		if !packageRe.MatchString(pkg) {
+			fail(w, 400, "invalid package name")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+		defer cancel()
+		meta := a.metadata.get(ctx, pkg)
+		respond(w, 200, map[string]any{
+			"package": meta.Package, "label": meta.Label, "hasIcon": meta.HasIcon,
+		})
+	})
+	mux.HandleFunc("/api/app-icon", func(w http.ResponseWriter, r *http.Request) {
+		if !a.authed(r) {
+			fail(w, 401, "login required")
+			return
+		}
+		if r.Method != "GET" {
+			fail(w, 405, "method not allowed")
+			return
+		}
+		pkg := r.URL.Query().Get("package")
+		if !packageRe.MatchString(pkg) {
+			fail(w, 400, "invalid package name")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+		defer cancel()
+		meta := a.metadata.get(ctx, pkg)
+		if !meta.HasIcon || len(meta.Icon) < 8 {
+			fail(w, 404, "icon unavailable")
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Length", strconv.Itoa(len(meta.Icon)))
+		_, _ = w.Write(meta.Icon)
+	})
 	mux.HandleFunc("/api/screen", func(w http.ResponseWriter, r *http.Request) {
 		if !a.authed(r) {
 			fail(w, 401, "login required")
@@ -307,8 +356,13 @@ func (a *app) handler() http.Handler {
 				fail(w, 400, "invalid package name")
 				return
 			}
-			exe = "/system/bin/monkey"
-			args = []string{"-p", in.Package, "-c", "android.intent.category.LAUNCHER", "1"}
+			if err := launchInstalledApp(r.Context(), in.Package, runWith); err != nil {
+				log.Printf("desktop launch %q failed: %v", in.Package, err)
+				fail(w, 503, err.Error())
+				return
+			}
+			respond(w, 200, map[string]string{"status": "sent"})
+			return
 		default:
 			fail(w, 400, "unknown action")
 			return

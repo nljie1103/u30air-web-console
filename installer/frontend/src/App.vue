@@ -52,7 +52,7 @@ const appSearch = ref('')
 const showSystem = ref(false)
 const activeOnly = ref<'all' | 'enabled' | 'disabled'>('all')
 const adbPath = ref('')
-const envVersion = ref('2.4.0')
+const envVersion = ref('2.4.1')
 const loading = ref('')
 const scanning = ref(false)
 const deviceLoading = ref(false)
@@ -435,7 +435,7 @@ async function copyText(value: string) {
 }
 function previewSetup() {
   ready.value = true
-  envVersion.value = '2.4.0'
+  envVersion.value = '2.4.1'
   adbPath.value = 'C:\\Android\\platform-tools\\adb.exe'
   devices.value = [{ serial: 'ZY22FQ7A9H', state: 'device', detail: 'usb:1-4 product:demo model:Pixel' },{ serial: '192.168.1.28:5555', state: 'offline' }]
   selected.value = 'ZY22FQ7A9H'

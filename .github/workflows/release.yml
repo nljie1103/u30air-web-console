@@ -35,6 +35,7 @@ jobs:
         run: |
           node installer/frontend/tests/e2e.mjs
           node installer/frontend/tests/edge-e2e.mjs
+          node installer/frontend/tests/webconsole-apps-e2e.mjs
       - name: Windows 管理器后端回归测试
         shell: pwsh
         run: |
@@ -114,7 +115,7 @@ jobs:
           test -s dist/windows/AndroidWebDesktopManager-Portable.zip
           test -f installer/adb_client.py
           test -f web-console/main.go
-          (cd web-console && go test ./... && go vet ./...)
+          (cd web-console && go test -race ./... && go vet ./...)
           node --check web-console/web/app.js
           bash -n web-console/deploy/install_linux_mac.sh
           sh -n web-console/deploy/stop.sh
@@ -136,9 +137,10 @@ jobs:
           mkdir -p dist/package/installer
           cp README.md dist/package/README.md
           cp web-console/deploy/* dist/package/installer/
+          cp web-console/THIRD_PARTY_NOTICES.md dist/package/THIRD_PARTY_NOTICES.md
           printf '%s\n' "$VERSION" > dist/package/VERSION
           (cd web-console && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o ../dist/package/desktopd .)
-          (cd dist/package && zip -q -r ../android-web-desktop-arm64.zip README.md VERSION desktopd installer)
+          (cd dist/package && zip -q -r ../android-web-desktop-arm64.zip README.md VERSION desktopd THIRD_PARTY_NOTICES.md installer)
           unzip -t dist/android-web-desktop-arm64.zip | tail -1
           sha256sum dist/android-web-desktop-arm64.zip dist/windows/AndroidWebDesktopManager.exe dist/windows/AndroidWebDesktopManager-Portable.zip
       - name: 创建中文 Release（一次构建）

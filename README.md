@@ -23,9 +23,9 @@
 | 部署维护 | 从 GitHub 校验下载或选择本地安装包；安装、更新、卸载、异常回滚 |
 | 应用管理 | 按需查询应用、搜索、卸载普通应用，停用与恢复非关键系统组件 |
 | 设备控制 | 重启、关机、打开设备端网页控制台 |
-| 网页桌面 | 截图预览、点击和滑动、系统按键、用户应用启动、手动在线更新 |
+| 网页桌面 | 截图预览、点击和滑动、系统按键、用户应用名称和图标、直接启动应用、手动在线更新 |
 
-网页桌面目前使用定时截图，不是高帧率视频流。应用功能与触控效果取决于 Android 系统授予 ADB Shell 的权限。
+网页桌面目前使用定时截图，不是高帧率视频流。用户应用名称和图标从设备本地 APK 资源读取，无法解析时会回退为包名及首字母图标。可以直接启动具有公开桌面入口的应用；没有启动入口的后台组件不会强行运行。
 
 ---
 
@@ -97,9 +97,15 @@ android-web-desktop/
 ├── web-console/                  # Android 设备端源码
 │   ├── main.go                   # 网页控制台服务
 │   ├── update.go                 # Android 在线更新与回滚
+│   ├── launch.go                 # Activity Manager 应用启动
+│   ├── app_metadata.go           # 已安装 APK 名称和图标解析
+│   ├── launch.go                 # Activity Manager 应用启动
+│   ├── app_metadata.go           # 已安装 APK 名称和图标解析
 │   ├── web/                      # Android 页面资源
 │   ├── deploy/                   # 跨平台首次安装脚本
 │   ├── version.json              # 唯一的正式版本及更新说明
+│   ├── THIRD_PARTY_NOTICES.md    # 第三方依赖许可声明
+│   ├── THIRD_PARTY_NOTICES.md    # 第三方依赖许可声明
 │   └── go.mod
 ├── .gitignore
 └── README.md

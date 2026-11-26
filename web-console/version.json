@@ -1,5 +1,5 @@
 {
-  "version": "2.4.0",
-  "title": "Windows原生Edge窗口替代WinForms解决拖动卡死",
-  "notes": "### Windows EXE 窗口架构更新\n- 将 Windows 管理器窗口由 pywebview + pythonnet/WinForms + WebView2 宿主改为 Microsoft Edge 原生应用窗口（--app 模式）。\n- 原来的 Vue 3 侧边栏、设备管理、部署更新、应用管理、运行日志等功能全部保留。\n- Windows 标题栏拖动、缩放和窗口消息完全交给 Edge 本身处理，减少 WinForms 在移动窗口时出现死锁或卡死的风险。\n- Python ADB 管理后端通过仅监听 127.0.0.1 随机端口的受限 HTTP API 为页面提供功能，启用单次启动令牌、同源校验、请求大小限制和明确的接口白名单。\n- 移除 pywebview/pythonnet/.NET 加载配置依赖；选择本地 ZIP 和 adb.exe 时使用独立原生文件对话框。\n\n### 验收改进\n- Windows CI 新增真实移动窗口、模拟标题栏按下拖动、松开后通过 Edge 调试接口检查 Vue 交互和 Python 管理接口响应。\n- 新增真实 Chromium/Edge 浏览器与 Python HTTP 桥接的端到端测试，以及跨来源请求保护和慢速请求隔离测试。\n- 便携版与独立 EXE 分别测试窗口移动及界面响应。\n\n### 使用说明\n- Windows 10/11 需要安装完整 Microsoft Edge 浏览器（仅安装 WebView2 Runtime 不够）。\n- 新版本会以无地址栏的 Edge 应用窗口形式打开；关闭该窗口即结束管理程序。\n- Android ARM64 网页服务的功能与先前版本保持兼容。"
+  "version": "2.4.1",
+  "title": "修复网页控制台应用启动权限并显示真实应用名称与图标",
+  "notes": "### Android 网页控制台\n- 修复点击包名启动应用时，旧 monkey 命令可能触发 INJECT_EVENTS 事件注入权限限制的问题；改为使用 Android Activity Manager 解析并启动桌面 Activity。\n- 如果应用没有启动入口或系统拒绝启动，显示 Android 返回的具体原因，而不是笼统提示“没有权限”。\n- 应用列表支持从已安装 APK 资源读取应用名称和图标，在名称下方保留完整包名。\n- 搜索支持应用名称与包名；无法解析的图标回退为首字母，不依赖网络图标库，也不要求另装 Android 应用或 Root。\n- 名称和图标异步读取并限制并发，保持原有屏幕点击、系统按键、noVNC 链接和在线更新功能。\n\n### 测试与安全\n- 新增 Activity 启动入口解析、异常信息、非法包名和 APK 路径检查。\n- 用真实 APK 测试名称与图标提取；新增 Chromium 端到端测试覆盖图标、搜索、启动及失败信息。\n- 应用名称与图标接口仍需登录；设有限制资源大小与并行数的保护。\n- 附带第三方开源依赖许可声明。"
 }
